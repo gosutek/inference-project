@@ -4,3 +4,7 @@
 *.ptx
 *.cubin
 *.fatbin
+
+build/
+.venv/
+gemma-4-E4B-it/
