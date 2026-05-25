@@ -26,7 +26,9 @@ find_package(CUDAToolkit REQUIRED)
 
 add_executable(scratch-inference
   src/main.c
+  external/cJSON.c
 )
 
 target_include_directories(scratch-inference PRIVATE src)
 target_include_directories(scratch-inference PRIVATE include)
+target_include_directories(scratch-inference PRIVATE external)
