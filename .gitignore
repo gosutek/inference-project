@@ -5,6 +5,11 @@
 *.cubin
 *.fatbin
 
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+.cache/
 build/
-.venv/
 gemma-4-E4B-it/
