@@ -20,7 +20,7 @@ static i32 st_get_bsize(const char* safetensor_path, u64* bsize)
 
 int main(void)
 {
-	const char* model_filepath = "gemma-4-E4B-it/model.safetensors";
+	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
 	u64         st_bsize = 0;  // total file size of the safetensor in bytes
 	if (st_get_bsize(model_filepath, &st_bsize) != 1) {
 		fprintf(stderr, "couldn't read file size of %s\n", model_filepath);
@@ -45,6 +45,8 @@ int main(void)
 
 	ExecCtx* e_ctx = NULL;
 	exec_ctx_create(&e_ctx, model_bsize);
+	i32 ye = 0;
+	scanf("Gimme:%d", &ye);
 	exec_ctx_destroy(&e_ctx);
 
 #ifndef NDEBUG

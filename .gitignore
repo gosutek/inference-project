@@ -13,3 +13,4 @@ cmake_install.cmake
 .cache/
 build/
 gemma-4-E4B-it/
+gemma-4-E2B-it/
