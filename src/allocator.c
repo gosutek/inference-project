@@ -6,6 +6,10 @@
 
 #include "helpers.h"
 
+#ifndef NDEBUG
+#include <stdio.h>
+#endif
+
 /*
  * +------------------------------------------------------------------------------+
  * |                             PLATFORM SPECIFIC                                |
@@ -46,7 +50,7 @@ static i32 vm_uncommit(void* addr, const u64 size)
 	return madvise(addr, size, MADV_DONTNEED) == 0; /* Subsequent access will result in zero-fill-on-demand pages */
 }
 
-b32 exec_ctx_create(ExecCtx** ctx)
+b32 exec_ctx_create(ExecCtx** ctx, const u64 model_bsize)
 {
 	if (*ctx) {  // already exists
 		return 0;
@@ -59,30 +63,33 @@ b32 exec_ctx_create(ExecCtx** ctx)
 	if (!mem_arena_host_push((HostArena*)(ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena)) {
 		return 0;
 	}
-
-	if (!mem_arena_dev_create(&(*ctx)->dev_arena, GIB(1))) {
+#ifndef NDEBUG
+	printf("Allocating %lu bytes on the GPU\n", model_bsize);
+#endif
+	if (!mem_arena_dev_create(&(*ctx)->dev_arena, model_bsize)) {
 		return 0;
 	}
 
 	return 1;
 }
 
-b32 exec_ctx_destroy(ExecCtx* ctx)
+b32 exec_ctx_destroy(ExecCtx** ctx)
 {
-	if (!ctx) {  // doesn't exist
+	if (!(*ctx)) {  // doesn't exist
 		return 0;
 	}
 
 	// Free the device memory first
 	// if for some reason we freed the host memory first then we'd have no handle to the device chunk
-	if (ctx->dev_arena._d_ptr && !mem_arena_dev_destroy(&ctx->dev_arena)) {
+	if ((*ctx)->dev_arena._d_ptr && !mem_arena_dev_destroy(&(*ctx)->dev_arena)) {
 		return 0;
 	}
 
-	if (!mem_arena_host_destroy((HostArena*)(ctx))) {
+	if (!mem_arena_host_destroy((HostArena*)(*ctx))) {
 		return 0;
 	}
 
+	*ctx = NULL;
 	return 1;
 }
 
@@ -108,8 +115,7 @@ b32 mem_arena_host_create(HostArena** const arena,
 {
 	// TODO: Debug print these at some point to ensure correctness.
 	const u32 page_size = vm_get_page_size();
-	const u64 pa_reserve_size =  // pa = page aligned
-		reserve_size + PADDING_POW2(reserve_size, page_size);
+	const u64 pa_reserve_size = reserve_size + PADDING_POW2(reserve_size, page_size);  // pa = page aligned
 	const u64 pa_commit_size = commit_size + PADDING_POW2(commit_size, page_size);
 
 	*arena = (HostArena*)vm_reserve(reserve_size);
@@ -117,7 +123,7 @@ b32 mem_arena_host_create(HostArena** const arena,
 		return 0;
 	}
 
-	if (!vm_commit(*arena, pa_commit_size)) { /* Allocate for the MemArena members */
+	if (!vm_commit(*arena, pa_commit_size)) { /* Allocate for the HostArena members */
 		return 0;
 	}
 
@@ -127,7 +133,7 @@ b32 mem_arena_host_create(HostArena** const arena,
 	(*arena)->commit_pos = pa_commit_size;
 	(*arena)->pos = sizeof **arena;
 
-	return 0;
+	return 1;
 }
 
 b32 mem_arena_host_destroy(HostArena* arena)

@@ -24,8 +24,8 @@ extern "C"
 		DevArena  dev_arena;
 	} ExecCtx;
 
-	b32 exec_ctx_create(ExecCtx** ctx);
-	b32 exec_ctx_destroy(ExecCtx* ctx);
+	b32 exec_ctx_create(ExecCtx** ctx, const u64 model_bsize);
+	b32 exec_ctx_destroy(ExecCtx** ctx);
 	b32 mem_arena_host_create(HostArena** const arena,
 		const u64                               reserve_size,
 		const u64                               commit_size);

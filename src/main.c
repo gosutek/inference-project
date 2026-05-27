@@ -39,8 +39,19 @@ int main(void)
 		exit(EXIT_FAILURE);
 	}
 
+	// This is the byte size of the actual model (weights), we need to allocate at least this much for DevArena
 	const u64 model_bsize = st_bsize - header_bsize - sizeof header_bsize;
 	fclose(file);
+
+	ExecCtx* e_ctx = NULL;
+	exec_ctx_create(&e_ctx, model_bsize);
+	exec_ctx_destroy(&e_ctx);
+
+#ifndef NDEBUG
+	if (e_ctx) {
+		printf("[WARNING] e_ctx is not null\n");
+	}
+#endif
 
 	return 0;
 }
