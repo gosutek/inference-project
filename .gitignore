@@ -7,9 +7,10 @@
 
 compile_commands.json
 CMakeCache.txt
-CMakeFiles/
 cmake_install.cmake
+.clangd
 
+CMakeFiles/
 .cache/
 build/
 gemma-4-E4B-it/
