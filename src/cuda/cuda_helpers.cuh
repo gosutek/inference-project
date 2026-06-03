@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cuda_bf16.h>
+
 #include "helpers.h"
+
+typedef __nv_bfloat16 bf16;
 
 /*
   * +------------------------------------------------------------------------------+
