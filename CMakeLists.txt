@@ -15,7 +15,7 @@ set(CMAKE_CUDA_ARCHITECTURES 89)
 find_package(CUDAToolkit REQUIRED)
 
 add_executable(inf
-  src/main.c
+  src/main.cu
   src/allocator.c
 
   external/cJSON.c
@@ -49,6 +49,8 @@ target_compile_options(inf PRIVATE
     --threads 2
   >
 )
+
+target_link_libraries(inf PRIVATE CUDA::cudart CUDA::cuda_driver)
 
 target_include_directories(inf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src

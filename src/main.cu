@@ -9,22 +9,78 @@
 
 #include "allocator.h"
 #include "helpers.h"
+#include "model.cuh"
 
-static i32 safetensor_get_bsize(const char* safetensor_path, u64* bsize)
+static i32 get_file_bsize(const char* filepath, u64* const bsize)
 {
 	struct stat st;
-	if (stat(safetensor_path, &st) == 0) {
+	if (stat(filepath, &st) == 0) {
 		*bsize = (u64)st.st_size;
 		return 1;
 	}
 	return 0;
 }
 
+static i32 build_model(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
+{
+	FILE* file = fopen(model_config_filepath, "r");
+	if (!file) {
+		fprintf(stderr, "couldn't read file %s\n", model_config_filepath);
+		exit(EXIT_FAILURE);
+	}
+
+	u64 model_config_bsize = 0;
+	get_file_bsize(model_config_filepath, &model_config_bsize);
+
+	char* json_buf = NULL;
+	if (mem_arena_host_push((HostArena*)e_ctx, model_config_bsize + 1, (void**)&json_buf) != 1) {
+		fprintf(stderr, "failed pool push\n");
+		exit(EXIT_FAILURE);
+	}
+	if (fread(json_buf, sizeof *json_buf, model_config_bsize, file) != model_config_bsize) {
+		fprintf(stderr, "failed read\n");
+		exit(EXIT_FAILURE);
+	}
+
+	json_buf[model_config_bsize] = '\0';  // cJSON works on null-terminated strings
+
+	cJSON* model_config = cJSON_Parse(json_buf);
+	model_config = model_config->child;
+	while (strcmp(model_config->string, "text_config") != 0) {
+		model_config = model_config->next;
+	}
+	model->config.dim = cJSON_GetObjectItem(model_config, "hidden_size")->valueint;
+	model->config.ffn_dim = cJSON_GetObjectItem(model_config, "intermediate_size")->valueint;
+	model->config.global_head_dim = cJSON_GetObjectItem(model_config, "global_head_dim")->valueint;
+	model->config.n_heads = cJSON_GetObjectItem(model_config, "num_attention_heads")->valueint;
+	model->config.vocab_size = cJSON_GetObjectItem(model_config, "vocab_size")->valueint;
+	model->config.n_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
+
+	cJSON_Delete(model_config);
+	return 1;
+}
+
+static void print_model(const Model* const model)
+{
+	printf(
+		"Model Configuration:\n\t\
+        - dim: %d\n\t\
+        - ffn_dim: %d\n\t\
+        - global_head_dim: %d\n\t\
+        - n_heads: %d\n\t\
+        - vocab_size: %d\n\t\
+        - n_layers: %d\n",
+		model->config.dim, model->config.ffn_dim, model->config.global_head_dim, model->config.n_heads, model->config.vocab_size, model->config.n_layers);
+	return;
+}
+
 int main(void)
 {
 	const char* model_filepath = "gemma-4-E2B-it/model.safetensors";
-	u64         safetensor_bsize = 0;  // total file size of the safetensor in bytes
-	if (safetensor_get_bsize(model_filepath, &safetensor_bsize) != 1) {
+	const char* model_config_filepath = "gemma-4-E2B-it/config.json";
+
+	u64 safetensor_bsize = 0;  // total file size of the safetensor in bytes
+	if (get_file_bsize(model_filepath, &safetensor_bsize) != 1) {
 		fprintf(stderr, "couldn't read file size of %s\n", model_filepath);
 		exit(EXIT_FAILURE);
 	}
@@ -49,6 +105,9 @@ int main(void)
 		fprintf(stderr, "failed pool allocation\n");
 		exit(EXIT_FAILURE);
 	}
+	Model model;
+	build_model(e_ctx, &model, model_config_filepath);
+	print_model(&model);
 
 	char* json_buf = NULL;
 	if (mem_arena_host_push((HostArena*)e_ctx, header_bsize + 1, (void**)&json_buf) != 1) {
@@ -91,7 +150,7 @@ int main(void)
 				exit(EXIT_FAILURE);
 			}
 			prev_end = end;
-			printf("%s: [%.0f, %.0f] %s\n", node->string, start->valuedouble, end->valuedouble, dtype->valuestring);
+			// printf("%s: [%.0f, %.0f] %s\n", node->string, start->valuedouble, end->valuedouble, dtype->valuestring);
 		}
 		node = node->next;
 	}
