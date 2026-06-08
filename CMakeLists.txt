@@ -17,6 +17,7 @@ find_package(CUDAToolkit REQUIRED)
 add_executable(inf
   src/main.cu
   src/allocator.c
+  src/tokenizer.c
 
   external/cJSON.c
 

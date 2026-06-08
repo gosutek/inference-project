@@ -14,6 +14,7 @@
 #include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
 #include "model.cuh"
+#include "tokenizer.h"
 
 static b32 correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
 {
@@ -273,6 +274,8 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 #endif
 	}
 	assert(dbg_counter == 600);
+
+	tokenizer_tokenize(*e_ctx, "Hello, World!");
 
 	cJSON_Delete(header);
 	munmap(model_mmap, model->file_bsize);
