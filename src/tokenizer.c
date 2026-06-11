@@ -146,17 +146,17 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 		exit(EXIT_FAILURE);
 	}
 
-	Vocab* vocab_map = NULL;
-	cJSON* vocab_item_json = vocab_object->child;
-	u64    vocab_items_bsize = 0;
-	u64    vocab_strings_bsize = 0;
+	VocabMap* vocab_map = NULL;
+	cJSON*    vocab_item_json = vocab_object->child;
+	u64       vocab_items_bsize = 0;
+	u64       vocab_strings_bsize = 0;
 	while (vocab_item_json != NULL) {
-		Vocab* vocab_item_map = NULL;
+		VocabMap* vocab_item_map = NULL;
 		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_map, (void**)&vocab_item_map) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
-		vocab_items_bsize += sizeof *vocab_item_json;  // keep track of the bsize to pop at the end
+		vocab_items_bsize += sizeof *vocab_item_map;  // keep track of the bsize to pop at the end
 
 		if (mem_arena_host_push((HostArena*)e_ctx, strlen(vocab_item_json->string), (void**)&vocab_item_map->token) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
@@ -170,13 +170,42 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 		vocab_item_json = vocab_item_json->next;
 	}
 
-	Vocab* found;
-	HASH_FIND_STR(vocab_map, "ace", found);
-	if (found != NULL) {
-		printf("%d\n", found->id);
+	MergesMap* merges_map = NULL;
+	cJSON*     merges_item_json = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "merges");
+	if (merges_item_json == NULL || !cJSON_IsArray(merges_item_json)) {
+		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'merges' object\n");
+		exit(EXIT_FAILURE);
+	}
+	u64    merges_items_bsize = 0;
+	u64    merges_strings_bsize = 0;
+	cJSON* merge_item = NULL;
+	cJSON_ArrayForEach(merge_item, merges_item_json)
+	{
+		MergesMap* merges_item_map = NULL;
+		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *merges_item_map, (void**)&merges_item_map) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		merges_items_bsize += sizeof *merges_item_map;
+		cJSON* left = cJSON_GetArrayItem(merge_item, 0);
+		cJSON* right = cJSON_GetArrayItem(merge_item, 1);
+
+		if (mem_arena_host_push((HostArena*)e_ctx, strlen(left->string), (void**)&merges_item_map->str_1) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(merges_item_map->str_1, left->string);
+		merges_strings_bsize += strlen(left->string);
+
+		if (mem_arena_host_push((HostArena*)e_ctx, strlen(right->string), (void**)&merges_item_map->str_2) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(merges_item_map->str_2, right->string);
+		merges_strings_bsize += strlen(right->string);
 	}
 
-	Vocab *e, *tmp;
+	VocabMap *e, *tmp;
 	HASH_ITER(hh, vocab_map, e, tmp)
 	{
 		HASH_DEL(vocab_map, e);
