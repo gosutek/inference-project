@@ -50,7 +50,7 @@ static i32 get_file_bsize(const char* filepath, u64* const bsize)
 
 static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
 {
-	FILE* file = fopen(model_config_filepath, "r");
+	FILE* file = fopen(model_config_filepath, "rb");
 	if (!file) {
 		fprintf(stderr, "couldn't read file %s\n", model_config_filepath);
 		exit(EXIT_FAILURE);
@@ -140,7 +140,7 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 		exit(EXIT_FAILURE);
 	}
 
-	FILE* file = fopen(model_filepath, "r");
+	FILE* file = fopen(model_filepath, "rb");
 	if (!file) {
 		fprintf(stderr, "couldn't load %s\n", model_filepath);
 		exit(EXIT_FAILURE);

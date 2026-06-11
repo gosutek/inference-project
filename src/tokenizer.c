@@ -105,7 +105,7 @@ static void tokenizer_normalizer(ExecCtx* e_ctx, const char* input, char** outpu
 
 static void tokenizer_parse_config(ExecCtx* const e_ctx)
 {
-	FILE* file = fopen("gemma-4-E2B-it/tokenizer.json", "r");
+	FILE* file = fopen("gemma-4-E2B-it/tokenizer.json", "rb");
 	if (!file) {
 		fprintf(stderr, "failed to open 'gemma-4-E2B-it/tokenizer.json'\n");
 		exit(EXIT_FAILURE);
