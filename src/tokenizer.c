@@ -135,13 +135,12 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 	mem_arena_host_pop((HostArena*)e_ctx, tokenizer_config_file_bsize + 1);
 	fclose(file);
 
-	tokenizer_config_json = tokenizer_config_json->child;
 	cJSON* model_object = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "model");
 	if (model_object == NULL) {
 		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'model' object\n");
 		exit(EXIT_FAILURE);
 	}
-	cJSON* vocab_object = cJSON_GetObjectItemCaseSensitive(tokenizer_config_json, "vocab");
+	cJSON* vocab_object = cJSON_GetObjectItemCaseSensitive(model_object, "vocab");
 	if (vocab_object == NULL) {
 		fprintf(stderr, "unexpected error: 'tokenizer_config.json' doesn't have a 'model/vocab' object\n");
 		exit(EXIT_FAILURE);
@@ -153,7 +152,7 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 	u64    vocab_strings_bsize = 0;
 	while (vocab_item_json != NULL) {
 		Vocab* vocab_item_map = NULL;
-		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_json, (void**)&vocab_item_map) != 1) {
+		if (mem_arena_host_push((HostArena*)e_ctx, sizeof *vocab_item_map, (void**)&vocab_item_map) != 1) {
 			fprintf(stderr, "failed to push to arena\n");
 			exit(EXIT_FAILURE);
 		}
@@ -174,7 +173,7 @@ static void tokenizer_parse_config(ExecCtx* const e_ctx)
 	Vocab* found;
 	HASH_FIND_STR(vocab_map, "ace", found);
 	if (found != NULL) {
-		printf("[ace]: %d\n", found->id);
+		printf("%d\n", found->id);
 	}
 
 	Vocab *e, *tmp;
