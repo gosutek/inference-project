@@ -150,12 +150,14 @@ b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_o
 	if (new_pos > arena->reserve_size) {
 		abort();
 	} else if (new_pos > arena->commit_pos) {
-		const u64 commit_size = CEIL_DIVI(new_pos, arena->commit_size);
-		if (commit_size > arena->reserve_size) {
-			abort();
-		}
+		u64 new_commit_pos = new_pos;
+		new_commit_pos += arena->commit_size - 1;
+		new_commit_pos -= new_commit_pos % arena->commit_size;
+		new_commit_pos = MIN(new_commit_pos, arena->reserve_size);
 
-		if (!vm_commit((u8*)arena + arena->commit_pos, commit_size)) {
+		u8* mem = (u8*)arena + arena->commit_pos;
+		u64 commit_size = new_commit_pos - arena->commit_pos;
+		if (!vm_commit(mem, commit_size)) {
 			return 0;
 		}
 		arena->commit_pos += arena->commit_size;
