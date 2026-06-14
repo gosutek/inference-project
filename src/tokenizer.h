@@ -32,7 +32,7 @@ extern "C"
 
 	void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath);
 	void tokenizer_destroy(Tokenizer* tokenizer);
-	void tokenizer_encode(ExecCtx* e_ctx, const char* input);
+	void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input);
 	void tokenizer_decode(ExecCtx* e_ctx, const char* input);
 
 #if defined(__cplusplus)

@@ -283,12 +283,13 @@ static void build_model(ExecCtx** const e_ctx, Model* const model, const char* m
 
 	Tokenizer tokenizer;
 	tokenizer_build(*e_ctx, &tokenizer, "gemma-4-E2B-it/tokenizer.json");
-
-	MergesMap* found;
-	HASH_FIND_STR(tokenizer.merges, "i st", found);
-	if (found) {
-		printf("%lu\n", found->rank);
-	}
+	tokenizer_encode(*e_ctx, &tokenizer, "Hello, World!");
+	tokenizer_encode(*e_ctx, &tokenizer, "Lorem ipsum dolor sit amet.");
+	// MergesMap* found;
+	// HASH_FIND_STR(tokenizer.merges, "i st", found);
+	// if (found) {
+	// 	printf("%lu\n", found->rank);
+	// }
 
 	tokenizer_destroy(&tokenizer);
 

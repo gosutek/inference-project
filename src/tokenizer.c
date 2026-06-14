@@ -103,13 +103,48 @@ static void tokenizer_normalizer(ExecCtx* e_ctx, const char* input, char** outpu
 	*c = '\0';
 }
 
-void tokenizer_encode(ExecCtx* e_ctx, const char* input)
+void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input)
 {
-	char* normalized_input = NULL;
-	tokenizer_normalizer(e_ctx, input, &normalized_input);
-	printf("%s\n", normalized_input);
-	mem_arena_host_pop((HostArena*)e_ctx, strlen(normalized_input));
-	// tokenizer_parse_config(e_ctx);
+	char** token_array = NULL;
+	if (mem_arena_host_push((HostArena*)e_ctx, strlen(input) * sizeof(char*), (void**)&token_array) != 1) {  // worst case, nothing will merged and we need a pointer for each character
+		fprintf(stderr, "failed to push to arena\n");
+		exit(EXIT_FAILURE);
+	}
+
+	const char* p = input;
+	u32         token_idx = 0;
+	while (*p != '\0') {
+		const char* word_start = p;
+		const b32   is_first = (p == input);
+		u64         word_len = 0;
+
+		while (*p != ' ' && *p != '\0') {
+			++word_len;
+			++p;
+		}
+
+		u64 alloc_len = word_len + (is_first ? 0 : strlen("▁")) + 1;
+
+		if (mem_arena_host_push((HostArena*)e_ctx, alloc_len, (void**)&token_array[token_idx]) != 1) {
+			fprintf(stderr, "failed to push to arena\n");
+			exit(EXIT_FAILURE);
+		}
+
+		if (!is_first) {
+			snprintf(token_array[token_idx], alloc_len, "▁%.*s", (i32)word_len, word_start);
+		} else {
+			snprintf(token_array[token_idx], alloc_len, "%.*s", (i32)word_len, word_start);
+		}
+		++token_idx;
+
+		if (*p == ' ')
+			++p;
+	}
+
+	for (u32 i = 0; i < token_idx; ++i) {
+		char* w = token_array[i];
+		printf("%s\n", w);
+	}
 }
 
 void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath)
