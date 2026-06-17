@@ -226,13 +226,17 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 					read_idx += 2;
 					continue;
 				}
-				char_idx = write_idx;
+				char_idx = write_idx + 1;
 				buf[write_idx++] = buf[read_idx++];
 			}
 		}
 
 		for (u32 i = 0; i < char_idx; ++i) {
-			printf("%s\n", buf[i]);
+			VocabMap* found_vocab = NULL;
+			HASH_FIND_STR(tokenizer->vocab, buf[i], found_vocab);
+			if (found_vocab != NULL) {
+				printf("[%d] %s\n", found_vocab->id, buf[i]);
+			}
 		}
 
 		mem_arena_host_pop((HostArena*)e_ctx, loop_allocation_bsize);
