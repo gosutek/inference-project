@@ -24,17 +24,16 @@ extern "C"
 		DevArena  dev_arena;
 	} ExecCtx;
 
-	b32 exec_ctx_create(ExecCtx** ctx);
-	b32 exec_ctx_destroy(ExecCtx** ctx);
-	b32 mem_arena_host_create(HostArena** const arena,
+	Error_t exec_ctx_create(ExecCtx** ctx);
+	Error_t exec_ctx_destroy(ExecCtx** ctx);
+	Error_t arena_host_create(HostArena** const arena,
 		const u64                               reserve_size,
 		const u64                               commit_size);
-	b32 mem_arena_host_destroy(HostArena* arena);
+	Error_t arena_host_destroy(HostArena* arena);
 
-	b32  mem_arena_host_push(HostArena* const arena,
-		const u64 req_size, void** ptr_out);
-	void mem_arena_host_pop(HostArena* const arena, u64 size);
-	void mem_arena_host_pop_at(HostArena* const arena, u64 pos);
+	Error_t arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_out);
+	void    arena_host_pop(HostArena* const arena, u64 size);
+	void    arena_host_pop_at(HostArena* const arena, u64 pos);
 
 	u64 mem_arena_host_pos_get(const HostArena* const arena);
 

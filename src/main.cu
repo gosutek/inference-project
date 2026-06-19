@@ -16,36 +16,33 @@
 #include "model.cuh"
 #include "tokenizer.h"
 
-static b32 correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
+static Error_t correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
 {
 	bf16* h_buf = NULL;
-	if (mem_arena_host_push((HostArena*)e_ctx, n * sizeof *d_ptr, (void**)&h_buf) != 1) {
-		fprintf(stderr, "failed pool allocation\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, n * sizeof *d_ptr, (void**)&h_buf));
 	cu_memcpy_dth((void*)h_buf, (void*)d_ptr, n * sizeof *d_ptr);
 
 	for (i32 i = 0; i < n; ++i) {
 		f32 d_val = __bfloat162float(h_buf[i]);
 		f32 h_val = __bfloat162float(h_ptr[i]);
 		if (d_val != h_val) {
-			mem_arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
+			arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
 			fprintf(stderr, "correctness_weight_ptr_partition failed [%d] gpu: %.5f cpu: %.5f\n", i, d_val, h_val);
-			return false;
+			return ErrorGeneric;
 		}
 	}
-	mem_arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
-	return true;
+	arena_host_pop((HostArena*)e_ctx, n * sizeof *d_ptr);
+	return Success;
 }
 
-static i32 get_file_bsize(const char* filepath, u64* const bsize)
+static Error_t get_file_bsize(const char* filepath, u64* const bsize)
 {
 	struct stat st;
 	if (stat(filepath, &st) == 0) {
 		*bsize = (u64)st.st_size;
-		return 1;
+		return Success;
 	}
-	return 0;
+	return ErrorGeneric;
 }
 
 static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
@@ -57,14 +54,12 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 	}
 
 	u64 model_config_bsize = 0;
-	get_file_bsize(model_config_filepath, &model_config_bsize);
+	CHECK_ERROR(get_file_bsize(model_config_filepath, &model_config_bsize));
 
 	char* json_buf = NULL;
 	// WARN: Am I popping this?
-	if (mem_arena_host_push((HostArena*)e_ctx, model_config_bsize + 1, (void**)&json_buf) != 1) {
-		fprintf(stderr, "failed pool push\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, model_config_bsize + 1, (void**)&json_buf));
+
 	if (fread(json_buf, sizeof *json_buf, model_config_bsize, file) != model_config_bsize) {
 		fprintf(stderr, "failed read\n");
 		exit(EXIT_FAILURE);
@@ -74,7 +69,7 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 
 	cJSON* model_config_root = cJSON_Parse(json_buf);
 
-	mem_arena_host_pop((HostArena*)e_ctx, model_config_bsize + 1);
+	arena_host_pop((HostArena*)e_ctx, model_config_bsize + 1);
 	fclose(file);
 
 	cJSON* model_config = model_config_root->child;
@@ -107,16 +102,13 @@ static void print_model(const Model* const model)
 	return;
 }
 
-static i32 parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* const file, cJSON** header)
+static Error_t parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* const file, cJSON** header)
 {
 	if (!file || (*header)) {
-		return 0;
+		return ErrorInvalidValue;
 	}
 	char* json_buf = NULL;
-	if (mem_arena_host_push((HostArena*)e_ctx, model->header_bsize + 1, (void**)&json_buf) != 1) {
-		fprintf(stderr, "failed pool push\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, model->header_bsize + 1, (void**)&json_buf));
 	if (fread(json_buf, sizeof *json_buf, model->header_bsize, file) != model->header_bsize) {
 		fprintf(stderr, "failed read\n");
 		exit(EXIT_FAILURE);
@@ -126,19 +118,16 @@ static i32 parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* co
 
 	*header = cJSON_Parse(json_buf);
 	if (!(*header)) {
-		return 0;
+		return ErrorGeneric;
 	}
-	mem_arena_host_pop((HostArena*)e_ctx, model->header_bsize + 1);  // free my own json_buf as cJSON allocates its own that we free later on
+	arena_host_pop((HostArena*)e_ctx, model->header_bsize + 1);  // free my own json_buf as cJSON allocates its own that we free later on
 
-	return 1;
+	return Success;
 }
 
 static void model_build(ExecCtx** const e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
 {
-	if (get_file_bsize(model_filepath, &model->file_bsize) != 1) {
-		fprintf(stderr, "couldn't read file size of %s\n", model_filepath);
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(get_file_bsize(model_filepath, &model->file_bsize));
 
 	FILE* file = fopen(model_filepath, "rb");
 	if (!file) {
@@ -151,27 +140,18 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 		exit(EXIT_FAILURE);
 	}
 
-	if (exec_ctx_create(e_ctx) != 1) {
-		fprintf(stderr, "failed e_ctx creation allocation\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(exec_ctx_create(e_ctx));
 
 	model_parse_config(*e_ctx, model, model_config_filepath);
 	const u64 model_weight_bsize = sizeof **model->weights.wq * model->config.n_layers * 4;  // wq, wk, wv, wo = 4
 
-	if (mem_arena_host_push((HostArena*)(*e_ctx), model_weight_bsize, (void**)&model->weights.wq) != 1) {
-		fprintf(stderr, "failed to allocate for model weights\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), model_weight_bsize, (void**)&model->weights.wq));
 	model->weights.wk = (bf16**)((u8*)model->weights.wq + model_weight_bsize / 4);
 	model->weights.wv = (bf16**)((u8*)model->weights.wk + model_weight_bsize / 4);
 	model->weights.wo = (bf16**)((u8*)model->weights.wv + model_weight_bsize / 4);
 
 	cJSON* header_root = NULL;
-	if (parse_model_header(*e_ctx, model, file, &header_root) != 1) {
-		fprintf(stderr, "failed to parse model header\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(parse_model_header(*e_ctx, model, file, &header_root));
 
 	const char* TENSOR_FILTER = "model.language_model.";
 	const u64   TENSOR_FILTER_LEN = strlen(TENSOR_FILTER);
@@ -199,15 +179,9 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 
 	model->model_bsize = lm_offset_end - lm_offset_start;
 	const u64 padded_dev_alloc_bsize = model->model_bsize + PADDING_POW2(model->model_bsize, GIB(1));
-	if (mem_arena_dev_create(&(*e_ctx)->dev_arena, padded_dev_alloc_bsize) != 1) {
-		fprintf(stderr, "failed to allocate device memory\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_dev_create(&(*e_ctx)->dev_arena, padded_dev_alloc_bsize));
 
-	if (mem_arena_dev_push(&(*e_ctx)->dev_arena, model->model_bsize, (void**)&model->data) != 1) {
-		fprintf(stderr, "failed to push pointer in pool\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(arena_dev_push(&(*e_ctx)->dev_arena, model->model_bsize, (void**)&model->data));
 
 	model->fd = fileno(file);
 	void* model_mmap = mmap(NULL, model->file_bsize, PROT_READ, MAP_PRIVATE, model->fd, 0);
@@ -255,25 +229,25 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 			model->weights.wq[layer] = (bf16*)((u8*)model->data + offset);
 #ifndef NDEBUG
 			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
-			correctness_weight_ptr_partition(*e_ctx, model->weights.wq[layer], h_ptr, 5);
+			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.wq[layer], h_ptr, 5));
 #endif
 		} else if (strcmp("self_attn.k_proj.weight", p) == 0) {
 			model->weights.wk[layer] = (bf16*)((u8*)model->data + offset);
 #ifndef NDEBUG
 			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
-			correctness_weight_ptr_partition(*e_ctx, model->weights.wk[layer], h_ptr, 5);
+			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.wk[layer], h_ptr, 5));
 #endif
 		} else if (strcmp("self_attn.v_proj.weight", p) == 0) {
 			model->weights.wv[layer] = (bf16*)((u8*)model->data + offset);
 #ifndef NDEBUG
 			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
-			correctness_weight_ptr_partition(*e_ctx, model->weights.wv[layer], h_ptr, 5);
+			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.wv[layer], h_ptr, 5));
 #endif
 		} else if (strcmp("self_attn.o_proj.weight", p) == 0) {
 			model->weights.wo[layer] = (bf16*)((u8*)model->data + offset);
 #ifndef NDEBUG
 			bf16* h_ptr = (bf16*)((u8*)model_mmap + offset);
-			correctness_weight_ptr_partition(*e_ctx, model->weights.wo[layer], h_ptr, 5);
+			CHECK_ERROR(correctness_weight_ptr_partition(*e_ctx, model->weights.wo[layer], h_ptr, 5));
 #endif
 		}
 
@@ -294,10 +268,7 @@ static void model_build(ExecCtx** const e_ctx, Model* const model, const char* m
 static void model_destroy(ExecCtx** e_ctx, Model* model)
 {
 	tokenizer_destroy(&model->tokenizer);
-	if (exec_ctx_destroy(e_ctx) != 1) {
-		fprintf(stderr, "failed to destroy ctx\n");
-		exit(EXIT_FAILURE);
-	}
+	CHECK_ERROR(exec_ctx_destroy(e_ctx));
 }
 
 int main(void)

@@ -1,12 +1,13 @@
 #include "cuda_allocator.cuh"
+#include "helpers.h"
 
-b32 mem_arena_dev_create(DevArena* arena, const u64 bsize)
+Error_t arena_dev_create(DevArena* arena, const u64 bsize)
 {
 	cudaPointerAttributes ptr_attr;
 	cudaPointerGetAttributes(&ptr_attr, arena->_d_ptr);
 
 	if (ptr_attr.type == cudaMemoryTypeDevice && ptr_attr.devicePointer != NULL) {
-		return 0;
+		return ErrorAlreadyInitialized;
 	}
 
 	CHECK_CUDA(cudaMalloc(&arena->_d_ptr, bsize));
@@ -14,40 +15,38 @@ b32 mem_arena_dev_create(DevArena* arena, const u64 bsize)
 	arena->size = bsize;
 	arena->pos = sizeof *arena;
 
-	return 1;
+	return Success;
 }
 
-b32 mem_arena_dev_destroy(DevArena* arena)
+Error_t arena_dev_destroy(DevArena* arena)
 {
 	if (!arena->_d_ptr) {
-		return 0;
+		return ErrorInvalidValue;
 	}
 
-	if (cudaFree(arena->_d_ptr) != cudaSuccess) {
-		return 0;
-	}
+	CHECK_CUDA(cudaFree(arena->_d_ptr));
 	arena->_d_ptr = nullptr;
 
-	return 1;
+	return Success;
 }
 
-b32 mem_arena_dev_push(DevArena* const arena, const u64 bsize, void** ptr_out)
+Error_t arena_dev_push(DevArena* const arena, const u64 bsize, void** ptr_out)
 {
 	if (!arena) {
-		return 0;
+		return ErrorInvalidValue;
 	}
 
 	const u64 pos_aligned = arena->pos + PADDING_POW2(arena->pos, sizeof(void*));
 	const u64 new_pos = pos_aligned + bsize;
 
 	if (new_pos > arena->size) {
-		abort();
+		return ErrorArenaOutOfMemory;
 	}
 
 	*ptr_out = arena->_d_ptr + pos_aligned;
 	arena->pos = new_pos;
 
-	return 1;
+	return Success;
 }
 
 // WARN: What if bsize isn't aligned?

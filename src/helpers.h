@@ -27,36 +27,47 @@ typedef double   f64;
 
 typedef i32 b32;
 
-#define CHECK_CUDA(x)                                                                \
-	do {                                                                             \
-		cudaError_t err = x;                                                         \
-		if (err != cudaSuccess) {                                                    \
-			fprintf(stderr, "CUDA error in %s at %s:%d: %s (%s=%d)\n", __FUNCTION__, \
-				__FILE__, __LINE__, cudaGetErrorString(err),                         \
-				cudaGetErrorName(err), err);                                         \
-			abort();                                                                 \
-		}                                                                            \
+typedef enum Error_t
+{
+	Success = 0,
+	ErrorMemoryAllocation = 1,
+	ErrorArenaOutOfMemory = 2,
+	ErrorAlreadyInitialized = 3,
+	ErrorInvalidValue = 4,
+	ErrorGeneric,
+
+} Error_t;
+
+#define CHECK_CUDA(x)                                                            \
+	do {                                                                         \
+		cudaError_t err = x;                                                     \
+		if (err != cudaSuccess) {                                                \
+			fprintf(stderr, "CUDA error in %s at %s:%d: %s (%s=%d)\n", __func__, \
+				__FILE__, __LINE__, cudaGetErrorString(err),                     \
+				cudaGetErrorName(err), err);                                     \
+			abort();                                                             \
+		}                                                                        \
 	} while (0)
 
-#define CHECK_CUSPARSE(x)                                                      \
-	do {                                                                       \
-		cusparseStatus_t err = x;                                              \
-		if (err != CUSPARSE_STATUS_SUCCESS) {                                  \
-			fprintf(stderr, "CUSPARSE error in %s at %s:%d: %s (%s=%d)\n",     \
-				__FUNCTION__, __FILE__, __LINE__, cusparseGetErrorString(err), \
-				cusparseGetErrorName(err), err);                               \
-			abort();                                                           \
-		}                                                                      \
+#define CHECK_CUSPARSE(x)                                                  \
+	do {                                                                   \
+		cusparseStatus_t err = x;                                          \
+		if (err != CUSPARSE_STATUS_SUCCESS) {                              \
+			fprintf(stderr, "CUSPARSE error in %s at %s:%d: %s (%s=%d)\n", \
+				__func__, __FILE__, __LINE__, cusparseGetErrorString(err), \
+				cusparseGetErrorName(err), err);                           \
+			abort();                                                       \
+		}                                                                  \
 	} while (0)
 
-#define CHECK_SPMM(x)                                                             \
-	do {                                                                          \
-		SpmmStatus_t err = x;                                                     \
-		if (err != SPMM_STATUS_SUCCESS) {                                         \
-			fprintf(stderr, "SPMM error in %s at %s:%d: (%s=%d)\n", __FUNCTION__, \
-				__FILE__, __LINE__, spmm_get_error_name(err), err);               \
-			abort();                                                              \
-		}                                                                         \
+#define CHECK_ERROR(x)                                               \
+	do {                                                             \
+		Error_t err = x;                                             \
+		if (err != Success) {                                        \
+			fprintf(stderr, "Error in %s at %s:%d: %d)\n", __func__, \
+				__FILE__, __LINE__, err);                            \
+			abort();                                                 \
+		}                                                            \
 	} while (0)
 
 #endif  // HELPERS_H

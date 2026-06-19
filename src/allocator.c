@@ -50,44 +50,49 @@ static i32 vm_uncommit(void* addr, const u64 size)
 	return madvise(addr, size, MADV_DONTNEED) == 0; /* Subsequent access will result in zero-fill-on-demand pages */
 }
 
-b32 exec_ctx_create(ExecCtx** ctx)
+Error_t exec_ctx_create(ExecCtx** ctx)
 {
 	if (*ctx) {  // already exists
-		return 0;
+		return ErrorAlreadyInitialized;
 	}
 
-	if (!mem_arena_host_create((HostArena**)(ctx), GIB(1), MIB(1))) {
-		return 0;
+	Error_t error = arena_host_create((HostArena**)(ctx), GIB(1), MIB(1));
+	if (error != Success) {
+		return error;
 	}
 
-	if (!mem_arena_host_push((HostArena*)(*ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena)) {
-		return 0;
+	error = arena_host_push((HostArena*)(*ctx), sizeof(*ctx)->dev_arena, (void**)&(*ctx)->dev_arena);
+	if (error != Success) {
+		return error;
 	}
 	(*ctx)->dev_arena._d_ptr = NULL;
 
-	return 1;
+	return Success;
 }
 
-b32 exec_ctx_destroy(ExecCtx** ctx)
+Error_t exec_ctx_destroy(ExecCtx** ctx)
 {
 	if (!(*ctx)) {  // doesn't exist
-		return 0;
+		return ErrorInvalidValue;
 	}
 
+	Error_t error = Success;
 	// Free the device memory first
 	// if for some reason we freed the host memory first then we'd have no handle to the device chunk
 	if ((*ctx)->dev_arena._d_ptr) {
-		if (mem_arena_dev_destroy(&(*ctx)->dev_arena) != 1) {
-			return 0;
+		error = arena_dev_destroy(&(*ctx)->dev_arena);
+		if (error != Success) {
+			return error;
 		}
 	}
 
-	if (mem_arena_host_destroy((HostArena*)(*ctx)) != 1) {
-		return 0;
+	error = arena_host_destroy((HostArena*)(*ctx));
+	if (error != Success) {
+		return error;
 	}
 
 	*ctx = NULL;
-	return 1;
+	return Success;
 }
 
 #else
@@ -106,7 +111,7 @@ b32 exec_ctx_destroy(ExecCtx** ctx)
 // INFO: COMMIT SIZE SHOULD BE PAGE-SIZE ALIGNED AND DERIVED FROM AN ALLOCATION
 // STRATEGY SIMILAR TO VECTOR OR SOMIN :)
 
-b32 mem_arena_host_create(HostArena** const arena,
+Error_t arena_host_create(HostArena** const arena,
 	const u64                               reserve_size,
 	const u64                               commit_size)
 {
@@ -117,11 +122,11 @@ b32 mem_arena_host_create(HostArena** const arena,
 
 	*arena = (HostArena*)vm_reserve(reserve_size);
 	if (!(*arena)) {
-		return 0;
+		return ErrorMemoryAllocation;
 	}
 
 	if (!vm_commit(*arena, pa_commit_size)) { /* Allocate for the HostArena members */
-		return 0;
+		return ErrorMemoryAllocation;
 	}
 
 	(*arena)->reserve_size = pa_reserve_size;
@@ -130,25 +135,25 @@ b32 mem_arena_host_create(HostArena** const arena,
 	(*arena)->commit_pos = pa_commit_size;
 	(*arena)->pos = sizeof **arena;
 
-	return 1;
+	return Success;
 }
 
-b32 mem_arena_host_destroy(HostArena* arena)
+Error_t arena_host_destroy(HostArena* arena)
 {
 	if (!vm_release(arena, arena->reserve_size)) {
-		return 0;
+		return ErrorMemoryAllocation;
 	}
 	arena = NULL;
-	return 1;
+	return Success;
 }
 
-b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_out)
+Error_t arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_out)
 {
 	const u64 aligned_pos = arena->pos + PADDING_POW2(arena->pos, sizeof(void*)); /* the pointer returned should be naturally aligned */
 	const u64 new_pos = aligned_pos + req_size;
 
 	if (new_pos > arena->reserve_size) {
-		abort();
+		return ErrorArenaOutOfMemory;
 	} else if (new_pos > arena->commit_pos) {
 		u64 new_commit_pos = new_pos;
 		new_commit_pos += arena->commit_size - 1;
@@ -158,7 +163,7 @@ b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_o
 		u8* mem = (u8*)arena + arena->commit_pos;
 		u64 commit_size = new_commit_pos - arena->commit_pos;
 		if (!vm_commit(mem, commit_size)) {
-			return 0;
+			return ErrorMemoryAllocation;
 		}
 		arena->commit_pos += arena->commit_size;
 	}
@@ -166,20 +171,20 @@ b32 mem_arena_host_push(HostArena* const arena, const u64 req_size, void** ptr_o
 	*ptr_out = (u8*)arena + aligned_pos;
 	arena->pos = new_pos;
 
-	return 1;
+	return Success;
 }
 
-void mem_arena_host_pop(HostArena* const arena, u64 size)
+void arena_host_pop(HostArena* const arena, u64 size)
 {
 	// TODO: Should I null check the ptr here?
 	size = MIN(size, arena->pos - sizeof *arena); /* don't dealloc MemArena members */
 	arena->pos -= size;
 }
 
-void mem_arena_host_pop_at(HostArena* const arena, u64 pos)
+void arena_host_pop_at(HostArena* const arena, u64 pos)
 {
 	u64 size = pos < arena->pos ? arena->pos - pos : 0;
-	mem_arena_host_pop(arena, size);
+	arena_host_pop(arena, size);
 }
 
 // TODO: Do I need this anymore?
