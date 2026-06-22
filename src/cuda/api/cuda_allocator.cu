@@ -50,19 +50,19 @@ Error_t arena_dev_push(DevArena* const arena, const u64 bsize, void** ptr_out)
 }
 
 // WARN: What if bsize isn't aligned?
-void mem_arena_dev_pop(DevArena* const arena, u64 bsize)
+void arena_dev_pop(DevArena* const arena, u64 bsize)
 {
 	bsize = MIN(bsize, arena->pos - sizeof *arena);
 	arena->pos -= bsize;
 }
 
-void mem_arena_dev_pop_at(DevArena* const arena, u64 pos)
+void arena_dev_pop_at(DevArena* const arena, u64 pos)
 {
 	u64 size = pos < arena->pos ? arena->pos - pos : 0;
-	mem_arena_dev_pop(arena, size);
+	arena_dev_pop(arena, size);
 }
 
-u64 mem_arena_dev_pos_get(const DevArena* const arena)
+u64 arena_dev_pos_get(const DevArena* const arena)
 {
 	return arena->pos;
 }

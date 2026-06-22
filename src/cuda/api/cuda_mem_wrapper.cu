@@ -24,13 +24,13 @@ extern "C"
 		return 1;
 	}
 
-	b32 cu_memcpy_htd(void* dst, const void* src, const u64 bsize)
+	Error_t cu_memcpy_htd(void* dst, const void* src, const u64 bsize)
 	{
 		if (!_is_dev_ptr(dst)) {
-			return 0;
+			return ErrorInvalidDevPtr;
 		}
 		CHECK_CUDA(cudaMemcpy(dst, src, bsize, cudaMemcpyHostToDevice));
-		return 1;
+		return Success;
 	}
 
 	b32 cu_memcpy_htd_async(void* dst, const void* src, const u64 bsize, cudaStream_t stream)

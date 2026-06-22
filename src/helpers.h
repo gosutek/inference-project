@@ -34,6 +34,8 @@ typedef enum Error_t
 	ErrorArenaOutOfMemory = 2,
 	ErrorAlreadyInitialized = 3,
 	ErrorInvalidValue = 4,
+	ErrorInvalidHostPtr = 5,
+	ErrorInvalidDevPtr = 6,
 	ErrorGeneric,
 
 } Error_t;

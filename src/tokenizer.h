@@ -13,7 +13,7 @@ extern "C"
 	typedef struct VocabMap
 	{
 		char*          token;
-		i32            id;
+		u32            id;
 		UT_hash_handle hh;
 	} VocabMap;
 
@@ -34,7 +34,7 @@ extern "C"
 
 	void tokenizer_build(ExecCtx* e_ctx, Tokenizer* tokenizer, const char* config_filepath);
 	void tokenizer_destroy(Tokenizer* tokenizer);
-	void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input);
+	void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input, u32** input_tokens, u32* const input_tokens_len, u64* const pop_arena_pos);
 	void tokenizer_decode(ExecCtx* e_ctx, const char* input);
 
 #if defined(__cplusplus)

@@ -11,10 +11,15 @@
 #include "cJSON.h"
 
 #include "allocator.h"
+#include "cuda_allocator.cuh"
+#include "cuda_helpers.cuh"
 #include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
+#include "kernels/input_embeddings.cuh"
 #include "model.cuh"
 #include "tokenizer.h"
+
+const u32 MAX_SEQ_LEN = 512;
 
 static Error_t correctness_weight_ptr_partition(ExecCtx* e_ctx, const bf16* const d_ptr, const bf16* const h_ptr, i32 n)
 {
@@ -280,7 +285,27 @@ int main(void)
 	Model    model = { 0 };
 	model_build(&e_ctx, &model, model_filepath, model_config_filepath);
 
-	tokenizer_encode(e_ctx, &model.tokenizer, "Hello, World!");
+	u32* _h_input_tokens = NULL;
+	u32  input_tokens_len = 0;
+	u64  pop_pos = 0;
+	tokenizer_encode(e_ctx, &model.tokenizer, "Hello, World!", &_h_input_tokens, &input_tokens_len, &pop_pos);
+
+	// Do this allcoation first
+	bf16*     _d_input_embeddings = NULL;
+	const u64 input_embeddings_len = input_tokens_len * model.config.dim * sizeof *_d_input_embeddings;
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, input_embeddings_len, (void**)&_d_input_embeddings));
+
+	// So that we can pop this allocation
+	const u64 input_tokens_bsize = input_tokens_len * sizeof *_h_input_tokens;
+	u32*      _d_input_tokens = NULL;
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, input_tokens_bsize, (void**)&_d_input_tokens));
+	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
+	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
+
+	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
+	k_fetch_input_embeddings<<<input_tokens_len, model.config.dim>>>(_d_input_tokens, input_tokens_len, model.weights.token_embedding_table, _d_input_embeddings);
+	cudaDeviceSynchronize();
+	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
 
 	model_destroy(&e_ctx, &model);
 

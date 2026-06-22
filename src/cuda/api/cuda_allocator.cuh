@@ -20,10 +20,10 @@ extern "C"
 	Error_t arena_dev_destroy(DevArena* arena);
 
 	Error_t arena_dev_push(DevArena* const arena, const u64 bsize, void** ptr_out);
-	void    mem_arena_dev_pop(DevArena* const arena, u64 bsize);
-	void    mem_arena_dev_pop_at(DevArena* const arena, u64 pos);
+	void    arena_dev_pop(DevArena* const arena, u64 bsize);
+	void    arena_dev_pop_at(DevArena* const arena, u64 pos);
 
-	u64 mem_arena_dev_pos_get(const DevArena* const arena);
+	u64 arena_dev_pos_get(const DevArena* const arena);
 
 #if defined(__cplusplus)
 }

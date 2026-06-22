@@ -36,11 +36,15 @@ static inline u32 utf8_byte_count(const char* const c)
 	}
 }
 
-void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input)
+void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const char* input, u32** input_tokens, u32* const input_tokens_len, u64* const pop_arena_pos)
 {
 	char**      buf = NULL;
 	const char* uni_underscore = "▁";
 	const u64   uni_underscore_bsize = strlen(uni_underscore);
+
+	u32 input_tokens_idx = 0;
+	*pop_arena_pos = e_ctx->host_arena.pos;
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, strlen(input) * sizeof **input_tokens, (void**)input_tokens));
 
 	const char* p = input;
 	u32         n_words = 0;
@@ -50,7 +54,7 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 #endif
 		const char* l = p;
 		u64         word_len = 0;
-		u64         loop_allocation_bsize = 0;
+		u64         allocation_bsize = 0;
 
 		while (*p != ' ' && *p != '\0') {
 			++word_len;
@@ -63,12 +67,12 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 		}
 
 		CHECK_ERROR(arena_host_push((HostArena*)e_ctx, word_len * sizeof(char*), (void**)&buf));
-		loop_allocation_bsize += word_len * sizeof(char*);
+		allocation_bsize += word_len * sizeof(char*);
 
 		u32 char_idx = 0;
 		if (!is_first) {
 			CHECK_ERROR(arena_host_push((HostArena*)e_ctx, uni_underscore_bsize + 1, (void**)&buf[char_idx]));
-			loop_allocation_bsize += uni_underscore_bsize + 1;
+			allocation_bsize += uni_underscore_bsize + 1;
 			strcpy(buf[char_idx], uni_underscore);
 			++char_idx;
 		}
@@ -77,7 +81,7 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 		{
 			const u32 char_len = utf8_byte_count(l);
 			CHECK_ERROR(arena_host_push((HostArena*)e_ctx, char_len + 1, (void**)&buf[char_idx]));
-			loop_allocation_bsize += char_len + 1;
+			allocation_bsize += char_len + 1;
 			memcpy(buf[char_idx], l, char_len);
 			buf[char_idx][char_len] = '\0';
 
@@ -92,7 +96,7 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 		// BPE LOOP
 		char* pair_buf = NULL;
 		CHECK_ERROR(arena_host_push((HostArena*)e_ctx, tokenizer->max_token_length, (void**)&pair_buf));
-		loop_allocation_bsize += tokenizer->max_token_length;
+		allocation_bsize += tokenizer->max_token_length;
 
 		while (1) {
 			u64 min_rank = UINT64_MAX;
@@ -138,7 +142,7 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 					char* merge = NULL;
 					u64   merge_allocation_bsize = strlen(buf[read_idx]) + strlen(buf[read_idx + 1]) + 1;
 					CHECK_ERROR(arena_host_push((HostArena*)e_ctx, merge_allocation_bsize, (void**)&merge));
-					loop_allocation_bsize += merge_allocation_bsize;
+					allocation_bsize += merge_allocation_bsize;
 					strcpy(merge, buf[read_idx]);
 					strcat(merge, buf[read_idx + 1]);
 					buf[write_idx++] = merge;
@@ -150,17 +154,31 @@ void tokenizer_encode(ExecCtx* e_ctx, const Tokenizer* const tokenizer, const ch
 			char_idx = write_idx;
 		}
 
+		// NOTE: Pickle:
+		// You don't know the exact size to allocate until you reach this point
+		// But then you need to allocate on top of all the non-persistent buffers used in the BPE loop
+		// That means you can't pop them.
+		// Solution:
+		// 1. Allocate them on top.
+		// 2. Record the size in loop_allocation_bsize
+		// 3. Return it to the caller.
+		// 4. Pop all of the buffers used in this function after you copy the input tokens to the device
+
+		*input_tokens_len += char_idx;
 		for (u32 i = 0; i < char_idx; ++i) {
 			VocabMap* found_vocab = NULL;
 			HASH_FIND_STR(tokenizer->vocab, buf[i], found_vocab);
 			if (found_vocab != NULL) {
+				(*input_tokens)[input_tokens_idx++] = found_vocab->id;
 #if !defined(NDEBUG)
 				printf("[%d] %s\n", found_vocab->id, buf[i]);
 #endif
 			}
 		}
-
-		arena_host_pop((HostArena*)e_ctx, loop_allocation_bsize);
+#if !defined(NDEBUG)
+		printf("input_tokens_len: %u\n", *input_tokens_len);
+#endif
+		arena_host_pop((HostArena*)e_ctx, allocation_bsize);
 	}
 }
 
