@@ -20,8 +20,8 @@ __global__ void k_fetch_input_embeddings(
 	bf16* const __restrict__ input_embeddings,
 	const u32 stride)
 {
-	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 0, _d_dn_rm_get(embeddings_table, dim, blockIdx.x, threadIdx.x * stride + 0));
-	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 1, _d_dn_rm_get(embeddings_table, dim, blockIdx.x, threadIdx.x * stride + 1));
-	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 2, _d_dn_rm_get(embeddings_table, dim, blockIdx.x, threadIdx.x * stride + 2));
-	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 3, _d_dn_rm_get(embeddings_table, dim, blockIdx.x, threadIdx.x * stride + 3));
+	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 0, _d_dn_rm_get(embeddings_table, dim, input_tokens[blockIdx.x], threadIdx.x * stride + 0));
+	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 1, _d_dn_rm_get(embeddings_table, dim, input_tokens[blockIdx.x], threadIdx.x * stride + 1));
+	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 2, _d_dn_rm_get(embeddings_table, dim, input_tokens[blockIdx.x], threadIdx.x * stride + 2));
+	_d_dn_rm_set(input_embeddings, dim, blockIdx.x, threadIdx.x * stride + 3, _d_dn_rm_get(embeddings_table, dim, input_tokens[blockIdx.x], threadIdx.x * stride + 3));
 }
