@@ -9,7 +9,7 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CUDA_ARCHITECTURES 89)
+set(CMAKE_CUDA_ARCHITECTURES native)
 
 find_package(CUDAToolkit REQUIRED)
 
@@ -48,7 +48,6 @@ target_compile_options(inf PRIVATE
     >
   $<$<COMPILE_LANGUAGE:CUDA>:
     -Xcompiler=-Wall,-Wextra
-    -gencode arch=compute_89,code=sm_89
     --threads 2
   >
 )
