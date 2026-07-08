@@ -402,12 +402,10 @@ int main(void)
 	// print_dev_buf_u32(e_ctx, _d_input_tokens, input_tokens_len * sizeof *_d_input_tokens);
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
 	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
-	CHECK_CUDA(cudaGetLastError());
 	CHECK_CUDA(cudaDeviceSynchronize());
 	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 
 	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.dim, model.weights.rms_input[0]);
-	CHECK_CUDA(cudaGetLastError());
 	CHECK_CUDA(cudaDeviceSynchronize());
 	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);

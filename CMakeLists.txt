@@ -25,6 +25,7 @@ add_executable(inf
 
   src/cuda/kernels/input_embeddings.cu
   src/cuda/kernels/rmsnorm.cu
+  src/cuda/kernels/gemm.cu
 )
 
 target_compile_options(inf PRIVATE
