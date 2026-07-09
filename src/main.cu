@@ -15,6 +15,7 @@
 #include "cuda_helpers.cuh"
 #include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
+#include "kernels/gemm.cuh"
 #include "kernels/input_embeddings.cuh"
 #include "kernels/rmsnorm.cuh"
 #include "model.cuh"
@@ -403,12 +404,35 @@ int main(void)
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
 	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
 	CHECK_CUDA(cudaDeviceSynchronize());
-	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
+	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 
 	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.dim, model.weights.rms_input[0]);
 	CHECK_CUDA(cudaDeviceSynchronize());
-	print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
+	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
+
+	/**
+    * TODO: 
+    * 1. Calculate the size for each projected matrix Q,K,V for layer 0
+    * 2. Allocate that
+    * 3. Perform 3 GEMMs
+    */
+
+	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_heads * sizeof **model.weights.wq;
+
+	bf16* q = NULL;
+	bf16* k = NULL;
+	bf16* v = NULL;
+
+	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&q);
+	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&k);
+	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&v);
+
+	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wq[0], q, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wk[0], k, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wv[0], v, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+
+	CHECK_CUDA(cudaDeviceSynchronize());
 
 	model_destroy(&e_ctx, &model);
 

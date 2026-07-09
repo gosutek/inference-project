@@ -9,9 +9,9 @@
 **/
 
 __global__ void k_gemm(
-	const bf16* const __restrict__ a,
-	const bf16* const __restrict__ b,
-	const bf16* const __restrict__ c,
+	const bf16* const __restrict__ a,  // expect rm
+	const bf16* const __restrict__ b,  // expect rm
+	bf16* const __restrict__ c,        // output rm
 	const u32 m,
 	const u32 k,
 	const u32 n);
