@@ -428,9 +428,11 @@ int main(void)
 	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&k);
 	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&v);
 
-	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wq[0], q, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wk[0], k, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemm<<<1, 1>>>(_d_input_embeddings, model.weights.wv[0], v, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	// WARNING: We need to pass the tranposed model.weights.wq
+	// NOTE: What if safetensors doesn't provide matrices in row major?
+	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wq[0], q, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wk[0], k, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wv[0], v, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
 
 	CHECK_CUDA(cudaDeviceSynchronize());
 
