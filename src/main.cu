@@ -377,10 +377,11 @@ int main(void)
 	model_build(&e_ctx, &model, model_filepath, model_config_filepath);
 	print_model_config(&model);
 
-	u32* _h_input_tokens = NULL;
-	u32  input_tokens_len = 0;
-	u64  pop_pos = 0;
-	tokenizer_encode(e_ctx, &model.tokenizer, "Hello, World!", &_h_input_tokens, &input_tokens_len, &pop_pos);
+	u32*        _h_input_tokens = NULL;
+	u32         input_tokens_len = 0;
+	u64         pop_pos = 0;
+	const char* token_prompt32 = "As far as I understand, the first thing I want to set right, is linear lighting along with the HDR tonemapper. In linear lighting I have enabled";
+	tokenizer_encode(e_ctx, &model.tokenizer, token_prompt32, &_h_input_tokens, &input_tokens_len, &pop_pos);
 
 	// Do this allocation first
 	bf16*     _d_input_embeddings = NULL;
@@ -394,12 +395,12 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
-	const dim3 block_size = model.config.dim / 4;  // 1 thread per 4 elements
+	dim3 block_size = model.config.dim / 4;  // 1 thread per 4 elements
 	if (block_size.x > dev_prop.maxThreadsPerBlock) {
 		fprintf(stderr, "threads launched for k_fetch_input_embeddings exceeds max number of threads per block for this device\n");
 		exit(EXIT_FAILURE);
 	}
-	const dim3 grid_size = input_tokens_len;  // one block per token
+	dim3 grid_size = input_tokens_len;  // one block per token
 	// print_dev_buf_u32(e_ctx, _d_input_tokens, input_tokens_len * sizeof *_d_input_tokens);
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
 	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
@@ -428,12 +429,15 @@ int main(void)
 	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&k);
 	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&v);
 
-	// WARNING: We need to pass the tranposed model.weights.wq
 	// NOTE: What if safetensors doesn't provide matrices in row major?
-	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wq[0], q, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wk[0], k, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<1, 1>>>(_d_input_embeddings, model.weights.wv[0], v, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	const u32 tiling_block_size = 32;
+	grid_size = dim3(CEIL_DIVI(model.config.dim, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
+	block_size = dim3(tiling_block_size, tiling_block_size);
+	// I need enough smem for 2 32x32 BF16 matrices
+	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *model.weights.wq[0];
 
+	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
+	k_gemmt<<<grid_size, block_size, smem_dyn_size>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	model_destroy(&e_ctx, &model);
