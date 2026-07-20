@@ -430,15 +430,28 @@ int main(void)
 	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&v);
 
 	// NOTE: What if safetensors doesn't provide matrices in row major?
+	// TODO: Have some sort of failsafe in case we try to use more than the device has
 	const u32 tiling_block_size = 32;
 	grid_size = dim3(CEIL_DIVI(model.config.dim, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
 	block_size = dim3(tiling_block_size, tiling_block_size);
 	// I need enough smem for 2 32x32 BF16 matrices
 	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *model.weights.wq[0];
 
+	cudaStream_t stream_q, stream_k, stream_v;
+	// NOTE: Creating these is not free!
+	CHECK_CUDA(cudaStreamCreate(&stream_q));
+	CHECK_CUDA(cudaStreamCreate(&stream_k));
+	CHECK_CUDA(cudaStreamCreate(&stream_v));
+
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
-	k_gemmt<<<grid_size, block_size, smem_dyn_size>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_q>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_k>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_v>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
+
+	cudaStreamDestroy(stream_q);
+	cudaStreamDestroy(stream_k);
+	cudaStreamDestroy(stream_v);
 
 	model_destroy(&e_ctx, &model);
 
