@@ -13,8 +13,7 @@ set(CMAKE_CUDA_ARCHITECTURES native)
 
 find_package(CUDAToolkit REQUIRED)
 
-add_executable(inf
-  src/main.cu
+add_library(inf_core STATIC
   src/allocator.c
   src/tokenizer.c
 
@@ -28,7 +27,14 @@ add_executable(inf
   src/cuda/kernels/gemm.cu
 )
 
-target_compile_options(inf PRIVATE
+target_include_directories(inf_core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/api
+  ${CMAKE_CURRENT_SOURCE_DIR}/external
+)
+
+target_compile_options(inf_core PUBLIC
   $<$<COMPILE_LANGUAGE:C>:
     -Wall
     -Wextra
@@ -53,11 +59,10 @@ target_compile_options(inf PRIVATE
   >
 )
 
-target_link_libraries(inf PRIVATE CUDA::cudart CUDA::cuda_driver)
+target_link_libraries(inf_core PUBLIC CUDA::cudart CUDA::cuda_driver)
 
-target_include_directories(inf PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/api
-  ${CMAKE_CURRENT_SOURCE_DIR}/external
+add_executable(inf
+  src/main.cu
 )
+
+target_link_libraries(inf PRIVATE inf_core)
