@@ -53,7 +53,7 @@ __global__ void k_rmsnorm(
 		const f32 a = (f32)_d_dn_rm_get(input_embeddings, dim, blockIdx.x, i);
 		const f32 g = (f32)_d_dn_rm_get(norm_weights, dim, blockIdx.x, i);
 
-		const bf16 norm_a = (a * g) / smem[0];
+		const bf16 norm_a = (bf16)((a * g) / smem[0]);
 		_d_dn_rm_set(input_embeddings, dim, blockIdx.x, i, norm_a);
 	}
 }
