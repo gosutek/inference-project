@@ -62,6 +62,16 @@ typedef enum Error_t
 		}                                                                  \
 	} while (0)
 
+#define CHECK_CUBLAS(x)                                         \
+	do {                                                        \
+		cublasStatus_t err = x;                                 \
+		if (err != CUBLAS_STATUS_SUCCESS) {                     \
+			fprintf(stderr, "CUBLAS error %d in %s at %s:%d\n", \
+				err, __func__, __FILE__, __LINE__);             \
+			abort();                                            \
+		}                                                       \
+	} while (0)
+
 #define CHECK_ERROR(x)                                               \
 	do {                                                             \
 		Error_t err = x;                                             \
