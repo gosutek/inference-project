@@ -25,6 +25,7 @@ add_library(inf_core STATIC
   src/cuda/kernels/input_embeddings.cu
   src/cuda/kernels/rmsnorm.cu
   src/cuda/kernels/gemm.cu
+  src/cuda/kernels/attention.cu
 )
 
 target_include_directories(inf_core PUBLIC
@@ -66,3 +67,5 @@ add_executable(inf
 )
 
 target_link_libraries(inf PRIVATE inf_core)
+
+add_subdirectory(tests)
