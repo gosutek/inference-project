@@ -55,10 +55,10 @@ __global__ void k_gemmt(
 
 	bf16 acc = 0.0;
 	for (u32 offset = 0; offset < k; offset += block_size) {
-		bf16 load_val = _d_dn_rm_get(a, k, c_row, c_col + offset);
+		bf16 load_val = _d_dn_rm_get(a, k, c_row, threadIdx.x + offset);
 		_d_dn_rm_set(smem_a, block_size, threadIdx.y, threadIdx.x, load_val);
 
-		load_val = _d_dn_rm_get(b, k, c_row + offset, c_col);
+		load_val = _d_dn_rm_get(b, k, c_col, threadIdx.y + offset);
 		_d_dn_rm_set(smem_b, block_size, threadIdx.x, threadIdx.y, load_val);  // transpose
 		__syncthreads();
 
