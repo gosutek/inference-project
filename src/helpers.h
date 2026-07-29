@@ -72,14 +72,14 @@ typedef enum Error_t
 		}                                                       \
 	} while (0)
 
-#define CHECK_ERROR(x)                                               \
-	do {                                                             \
-		Error_t err = x;                                             \
-		if (err != Success) {                                        \
-			fprintf(stderr, "Error in %s at %s:%d: %d)\n", __func__, \
-				__FILE__, __LINE__, err);                            \
-			abort();                                                 \
-		}                                                            \
+#define CHECK_ERROR(x)                                                    \
+	do {                                                                  \
+		Error_t err = x;                                                  \
+		if (err != Success) {                                             \
+			fprintf(stderr, "Error in %s at %s:%d errno:%d)\n", __func__, \
+				__FILE__, __LINE__, err);                                 \
+			abort();                                                      \
+		}                                                                 \
 	} while (0)
 
 #endif  // HELPERS_H

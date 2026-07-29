@@ -198,7 +198,7 @@ static Error_t parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE
 	return Success;
 }
 
-static void model_build(ExecCtx** const e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
+static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
 {
 	CHECK_ERROR(get_file_bsize(model_filepath, &model->file_bsize));
 
@@ -431,6 +431,7 @@ int main(void)
 
 	// NOTE: What if safetensors doesn't provide matrices in row major?
 	// TODO: Have some sort of failsafe in case we try to use more than the device has
+	// TODO: This should go into a kernel wrapper
 	const u32 tiling_block_size = 32;
 	grid_size = dim3(CEIL_DIVI(model.config.dim, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
 	block_size = dim3(tiling_block_size, tiling_block_size);
