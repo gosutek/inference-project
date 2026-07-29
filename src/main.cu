@@ -118,6 +118,34 @@ static Error_t get_file_bsize(const char* filepath, u64* const bsize)
 	return ErrorGeneric;
 }
 
+// TODO: You can make a struct out of this that keeps track of the bsize
+static Error_t create_stream_buf(ExecCtx* const e_ctx, cudaStream_t** stream_buf, const u64 n_heads)
+{
+	if (*stream_buf != nullptr) {
+		return ErrorAlreadyInitialized;
+	}
+	const u64 stream_buf_bsize = n_heads * sizeof **stream_buf;
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, stream_buf_bsize, (void**)stream_buf));
+
+	for (u32 i = 0; i < n_heads; ++i) {
+		CHECK_CUDA(cudaStreamCreate(&((*stream_buf)[i])));
+	}
+	return Success;
+}
+
+static Error_t destroy_stream_buf(cudaStream_t* stream_buf, const u64 n_heads)
+{
+	if (!*stream_buf) {
+		return ErrorInvalidValue;
+	}
+	const u64 stream_buf_bsize = n_heads * sizeof *stream_buf;
+
+	for (u32 i = 0; i < n_heads; ++i) {
+		CHECK_CUDA(cudaStreamDestroy(stream_buf[i]));
+	}
+	return Success;
+}
+
 static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const char* model_config_filepath)
 {
 	FILE* file = fopen(model_config_filepath, "rb");
@@ -438,21 +466,23 @@ int main(void)
 	// I need enough smem for 2 32x32 BF16 matrices
 	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *model.weights.wq[0];
 
-	cudaStream_t stream_q, stream_k, stream_v;
-	// NOTE: Creating these is not free!
-	CHECK_CUDA(cudaStreamCreate(&stream_q));
-	CHECK_CUDA(cudaStreamCreate(&stream_k));
-	CHECK_CUDA(cudaStreamCreate(&stream_v));
+	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
+	cudaStream_t* stream_buf = nullptr;
+	create_stream_buf(e_ctx, &stream_buf, model.config.n_heads);
 
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_q>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_k>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_v>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[0]>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[1]>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[2]>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
-	cudaStreamDestroy(stream_q);
-	cudaStreamDestroy(stream_k);
-	cudaStreamDestroy(stream_v);
+	// TODO:
+	// 1. Partition Q, K into heads
+	// 2. p-RoPE
+	// 3. Partition V into heads
+	// 4. Attention
+
+	destroy_stream_buf(stream_buf, model.config.n_heads);
 
 	model_destroy(&e_ctx, &model);
 
