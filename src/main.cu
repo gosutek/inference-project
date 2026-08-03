@@ -477,7 +477,8 @@ int main(void)
 	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[2]>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
-	k_prope(q, input_tokens_len, model.config.n_heads * model.config.global_head_dim);
+	k_prope(q, input_tokens_len, model.config.n_heads * model.config.global_head_dim, stream_buf[0]);
+	k_prope(q, input_tokens_len, model.config.n_heads * model.config.global_head_dim, stream_buf[1]);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	// TODO:

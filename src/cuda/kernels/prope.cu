@@ -56,7 +56,7 @@ __global__ void __prope_kernel(bf16* const x, const u32 model_dim, const u32 inp
  * |                                  WRAPPER                                     |
  * +------------------------------------------------------------------------------+
  */
-Error_t k_prope(bf16* const x, const u32 input_sequence_len, const u32 model_dim)
+Error_t k_prope(bf16* const x, const u32 input_sequence_len, const u32 model_dim, cudaStream_t stream)
 {
 	if (MOD_POW2(model_dim, 2) != 0) {
 		return ErrorUnexpectedValue;
@@ -71,7 +71,7 @@ Error_t k_prope(bf16* const x, const u32 input_sequence_len, const u32 model_dim
 	const dim3 grid_size = { grid_size_x, grid_size_y };
 	const dim3 block_size = { TILE_PREF_SIZE, TILE_PREF_SIZE };
 
-	__prope_kernel<<<grid_size, block_size>>>(x, model_dim, input_sequence_len, num_of_active_pairs);
+	__prope_kernel<<<grid_size, block_size, 0, stream>>>(x, model_dim, input_sequence_len, num_of_active_pairs);
 
 	return Success;
 }
