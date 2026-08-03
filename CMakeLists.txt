@@ -26,6 +26,7 @@ add_library(inf_core STATIC
   src/cuda/kernels/rmsnorm.cu
   src/cuda/kernels/gemm.cu
   src/cuda/kernels/attention.cu
+  src/cuda/kernels/prope.cu
 )
 
 target_include_directories(inf_core PUBLIC

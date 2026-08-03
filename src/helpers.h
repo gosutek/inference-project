@@ -36,6 +36,7 @@ typedef enum Error_t
 	ErrorInvalidValue = 4,
 	ErrorInvalidHostPtr = 5,
 	ErrorInvalidDevPtr = 6,
+	ErrorUnexpectedValue = 7,
 	ErrorGeneric,
 
 } Error_t;
