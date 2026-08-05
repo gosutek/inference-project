@@ -203,7 +203,20 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 	model->config.hidden_size = cJSON_GetObjectItem(model_config, "hidden_size")->valueint;
 	model->config.n_q_heads = cJSON_GetObjectItem(model_config, "num_attention_heads")->valueint;
 	model->config.n_kv_heads = cJSON_GetObjectItem(model_config, "num_key_value_heads")->valueint;
+
 	model->config.n_hidden_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
+
+	const u64 layer_types_ptr_bsize = model->config.n_hidden_layers * sizeof *model->config.layer_types;  // 35 char* pointers
+	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, layer_types_ptr_bsize, (void**)&model->config.layer_types));
+
+	cJSON* layer_types_json_array = cJSON_GetObjectItem(model_config, "layer_types");
+	for (u32 i = 0; i < model->config.n_hidden_layers; ++i) {
+		const char* const src_str = cJSON_GetArrayItem(layer_types_json_array, i)->valuestring;
+		const u64         src_str_bsize = strlen(src_str) * sizeof *src_str;
+		CHECK_ERROR(arena_host_push((HostArena*)e_ctx, src_str_bsize, (void**)&model->config.layer_types[i]));
+		strcpy(model->config.layer_types[i], cJSON_GetArrayItem(layer_types_json_array, i)->valuestring);
+	}
+
 	model->config.ffn_dim = cJSON_GetObjectItem(model_config, "intermediate_size")->valueint;
 	model->config.vocab_size = cJSON_GetObjectItem(model_config, "vocab_size")->valueint;
 	model->config.rms_norm_eps = cJSON_GetObjectItem(model_config, "rms_norm_eps")->valueint;
@@ -245,7 +258,7 @@ static void print_model(const Model* const model)
 	return;
 }
 
-static Error_t parse_model_header(ExecCtx* const e_ctx, Model* const model, FILE* const file, cJSON** header)
+static Error_t model_parse_header(ExecCtx* const e_ctx, Model* const model, FILE* const file, cJSON** header)
 {
 	if (!file || (*header)) {
 		return ErrorInvalidValue;
@@ -299,7 +312,7 @@ static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_f
 	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wo_ptrs_bsize, (void**)&(model->weights.wo)));
 
 	cJSON* header_root = NULL;
-	CHECK_ERROR(parse_model_header(*e_ctx, model, file, &header_root));
+	CHECK_ERROR(model_parse_header(*e_ctx, model, file, &header_root));
 
 	const char* TENSOR_FILTER = "model.language_model.";
 	const u64   TENSOR_FILTER_LEN = strlen(TENSOR_FILTER);
