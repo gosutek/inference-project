@@ -5,6 +5,7 @@
 *.cubin
 *.fatbin
 *.log
+valgrind.log*
 
 compile_commands.json
 CMakeCache.txt
