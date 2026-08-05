@@ -1,15 +1,16 @@
 #include "gemm.cuh"
 
-/**
- * This kernel gets its own separate file
- * such that I can later improve on it
- * and keep an archive of older versions
-**/
+#include "cuda_helpers.cuh"
 
+/*
+ * +------------------------------------------------------------------------------+
+ * |                                  KERNELS                                     |
+ * +------------------------------------------------------------------------------+
+ */
 /**
  * c = a * b
 **/
-__global__ void k_gemm(
+__global__ void __gemm(
 	const bf16* const __restrict__ a,  // expect rm
 	const bf16* const __restrict__ b,  // expect rm
 	bf16* const __restrict__ c,        // output rm
@@ -37,7 +38,7 @@ __global__ void k_gemm(
 /**
  * c = a * b^T
 **/
-__global__ void k_gemmt(
+__global__ void __gemmt(
 	const bf16* const __restrict__ a,  // expect rm
 	const bf16* const __restrict__ b,  // expect rm
 	bf16* const __restrict__ c,        // output rm
@@ -69,4 +70,27 @@ __global__ void k_gemmt(
 	}
 
 	_d_dn_rm_set(c, n, c_row, c_col, acc);
+}
+
+/*
+ * +------------------------------------------------------------------------------+
+ * |                                 WRAPPERS                                     |
+ * +------------------------------------------------------------------------------+
+ */
+Error_t k_gemm()
+{
+	return Success;
+}
+
+Error_t k_gemmt(const bf16* const a, const bf16* const b, bf16* const c, const u32 hidden_size, const cudaStream_t stream, const u32 input_seq_len, const u32 n)
+{
+	const u32  tiling_block_size = 32;
+	const dim3 grid_size = { CEIL_DIVI(hidden_size, tiling_block_size), CEIL_DIVI(input_seq_len, tiling_block_size) };
+	const dim3 block_size = { tiling_block_size, tiling_block_size };
+	// I need enough smem for 2 32x32 BF16 matrices
+	const u64 smem = 2 * tiling_block_size * tiling_block_size * sizeof *a;
+
+	__gemmt<<<grid_size, block_size, smem, stream>>>(a, b, c, tiling_block_size, input_seq_len, hidden_size, n);
+
+	return Success;
 }

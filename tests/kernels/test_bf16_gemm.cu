@@ -18,17 +18,6 @@ static void gen_dn_rm_bf16(bf16* a, const u32 seed)
 	}
 }
 
-static void run_k_gemmt(const bf16* const a, const bf16* const b, bf16* const c)
-{
-	const u32  tiling_block_size = 32;
-	const dim3 grid_size = dim3(CEIL_DIVI(COLS, tiling_block_size), CEIL_DIVI(ROWS, tiling_block_size));
-	const dim3 block_size = dim3(tiling_block_size, tiling_block_size);
-	// I need enough smem for 2 32x32 BF16 matrices
-	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *a;
-
-	k_gemmt<<<grid_size, block_size, smem_dyn_size>>>(a, b, c, block_size.x, ROWS, ROWS, ROWS);
-}
-
 static void run_cublas_ref(cublasHandle_t* cublas_handle, const bf16* const a, const bf16* const b, bf16* const c)
 {
 	const f32 alpha = 1.0f;
@@ -77,7 +66,7 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(d_a, a, a_bsize));
 	CHECK_ERROR(cu_memcpy_htd(d_b, b, a_bsize));
 
-	run_k_gemmt(d_a, d_b, d_c);
+	k_gemmt(d_a, d_b, d_c, ROWS, NULL, ROWS, ROWS);
 	CHECK_CUDA(cudaDeviceSynchronize());
 	CHECK_ERROR(cu_memcpy_dth(c, d_c, a_bsize));
 

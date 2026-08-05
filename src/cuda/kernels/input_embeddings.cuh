@@ -1,24 +1,5 @@
 #pragma once
 
-#include "cuda_helpers.cuh"
+#include "model.cuh"
 
-/**
- * This kernel gets its own separate file
- * such that I can later improve on it
- * and keep an archive of older versions
-**/
-
-__global__ void k_fetch_input_embeddings_v1(
-	const u32* const __restrict__ input_tokens,
-	const u64 input_tokens_len,
-	const u32 dim,
-	const bf16* const __restrict__ embeddings_table,
-	bf16* const __restrict__ input_embeddings,
-	const u32 stride);
-
-__global__ void k_fetch_input_embeddings(
-	const u32* const __restrict__ input_tokens,
-	const u64 input_tokens_len,
-	const u32 dim,
-	const bf16* const __restrict__ embeddings_table,
-	bf16* const __restrict__ input_embeddings);
+Error_t k_input_emb(const Model* const model, u32* const _d_input_tokens, bf16* const _d_input_embeddings, const u32 input_seq_len);

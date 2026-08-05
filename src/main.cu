@@ -478,29 +478,13 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
-	dim3 block_size = model.config.hidden_size / 4;  // 1 thread per 4 elements
-	if (block_size.x > dev_prop.maxThreadsPerBlock) {
-		fprintf(stderr, "threads launched for k_fetch_input_embeddings exceeds max number of threads per block for this device\n");
-		exit(EXIT_FAILURE);
-	}
-	dim3 grid_size = input_tokens_len;  // one block per token
-	// print_dev_buf_u32(e_ctx, _d_input_tokens, input_tokens_len * sizeof *_d_input_tokens);
-	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
-	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.hidden_size, model.weights.token_embedding_table, _d_input_embeddings);
+	CHECK_ERROR(k_input_emb(&model, _d_input_tokens, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
-	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 
-	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.hidden_size, model.weights.rms_input[0]);
+	CHECK_ERROR(k_rmsnorm(&model, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
-
-	/**
-    * TODO: 
-    * 1. Calculate the size for each projected matrix Q,K,V for layer 0
-    * 2. Allocate that
-    * 3. Perform 3 GEMMs
-    */
 
 	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
 
@@ -515,31 +499,20 @@ int main(void)
 	// NOTE: What if safetensors doesn't provide matrices in row major?
 	// TODO: Have some sort of failsafe in case we try to use more than the device has
 	// TODO: This should go into a kernel wrapper
-	const u32 tiling_block_size = 32;
-	grid_size = dim3(CEIL_DIVI(model.config.hidden_size, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
-	block_size = dim3(tiling_block_size, tiling_block_size);
-	// I need enough smem for 2 32x32 BF16 matrices
-	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *model.weights.wq[0];
 
 	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
 	cudaStream_t* stream_buf = nullptr;
 	create_stream_buf(e_ctx, &stream_buf, model.config.n_q_heads);
 
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[0]>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[1]>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[2]>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
+	k_gemmt(_d_input_embeddings, model.weights.wq[0], q, model.config.hidden_size, stream_buf[0], input_tokens_len, model.config.global_head_dim * model.config.n_q_heads);
+	k_gemmt(_d_input_embeddings, model.weights.wk[0], k, model.config.hidden_size, stream_buf[1], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
+	k_gemmt(_d_input_embeddings, model.weights.wv[0], v, model.config.hidden_size, stream_buf[2], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[0]);
 	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
 	CHECK_CUDA(cudaDeviceSynchronize());
-
-	// TODO:
-	// 1. Partition Q, K into heads
-	// 2. p-RoPE
-	// 3. Partition V into heads
-	// 4. Attention
 
 	destroy_stream_buf(stream_buf, model.config.n_q_heads);
 

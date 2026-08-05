@@ -2,13 +2,12 @@
 #include "helpers.h"
 #include "rmsnorm.cuh"
 
-/**
- * This kernel gets its own separate file
- * such that I can later improve on it
- * and keep an archive of older versions
-**/
-
-__global__ void k_rmsnorm(
+/*
+ * +------------------------------------------------------------------------------+
+ * |                                  KERNELS                                     |
+ * +------------------------------------------------------------------------------+
+ */
+__global__ void __rmsnorm(
 	bf16* const __restrict__ input_embeddings,
 	const u32 dim,
 	const bf16* const __restrict__ norm_weights)
@@ -56,4 +55,21 @@ __global__ void k_rmsnorm(
 		const bf16 norm_a = (bf16)((a * g) / smem[0]);
 		_d_dn_rm_set(input_embeddings, dim, blockIdx.x, i, norm_a);
 	}
+}
+
+/*
+ * +------------------------------------------------------------------------------+
+ * |                                  WRAPPER                                     |
+ * +------------------------------------------------------------------------------+
+ */
+Error_t k_rmsnorm(const Model* const model, bf16* const _d_input_embeddings, const u32 input_seq_len)
+{
+	if (!_is_dev_ptr(_d_input_embeddings)) {
+		return ErrorInvalidDevPtr;
+	}
+	const dim3 block_size = model->config.hidden_size / 4;
+	const dim3 grid_size = input_seq_len;
+
+	__rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model->config.hidden_size, model->weights.rms_input[0]);
+	return Success;
 }

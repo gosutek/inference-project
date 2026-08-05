@@ -1,26 +1,9 @@
 #pragma once
 
-#include "cuda_helpers.cuh"
+#include "helpers.h"
+#include <cuda_bf16.h>
 
-/**
- * This kernel gets its own separate file
- * such that I can later improve on it
- * and keep an archive of older versions
-**/
+typedef __nv_bfloat16 bf16;
 
-__global__ void k_gemm(
-	const bf16* const __restrict__ a,  // expect rm
-	const bf16* const __restrict__ b,  // expect rm
-	bf16* const __restrict__ c,        // output rm
-	const u32 m,
-	const u32 k,
-	const u32 n);
-
-__global__ void k_gemmt(
-	const bf16* const __restrict__ a,  // expect rm
-	const bf16* const __restrict__ b,  // expect rm
-	bf16* const __restrict__ c,        // output rm
-	const u32 block_size,
-	const u32 m,
-	const u32 k,
-	const u32 n);
+Error_t k_gemm();
+Error_t k_gemmt(const bf16* const a, const bf16* const b, bf16* const c, const u32 hidden_size, const cudaStream_t stream, const u32 input_seq_len, const u32 n);
