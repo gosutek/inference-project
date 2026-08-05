@@ -65,13 +65,32 @@ static Error_t print_dev_buf_bf16(ExecCtx* const e_ctx, bf16* src, const u64 bsi
 static void print_model_config(const Model* const model)
 {
 	printf(
-		"dim: %u\n"
-		"ffn_dim: %u\n"
-		"global_head_dim: %u\n"
-		"n_heads: %u\n"
-		"vocab_size: %u\n"
-		"n_layers: %u\n",
-		model->config.dim, model->config.ffn_dim, model->config.global_head_dim, model->config.n_heads, model->config.vocab_size, model->config.n_layers);
+		"Q Head Dimension: %u\n"
+		"KV Head Dimension: %u\n"
+		"Hidden Size: %u\n"
+		"#Q Heads: %u\n"
+		"#KV Heads: %u\n"
+		"#Layers: %u\n"
+		"FFN Dimension: %u\n"
+		"Vocabulary Size: %u\n"
+		"RMS Norm eps: %u\n"
+		"Partial rotary factor: %u\n"
+		"Global RoPE Theta: %u\n"
+		"Local RoPE Theta: %u\n"
+		"Sliding Window size: %u\n",
+		model->config.global_head_dim,
+		model->config.local_head_dim,
+		model->config.hidden_size,
+		model->config.n_q_heads,
+		model->config.n_kv_heads,
+		model->config.n_hidden_layers,
+		model->config.ffn_dim,
+		model->config.vocab_size,
+		model->config.rms_norm_eps,
+		model->config.partial_rotary_factor,
+		model->config.global_rope_theta,
+		model->config.local_rope_theta,
+		model->config.sliding_window);
 }
 
 static void print_dev_props()
@@ -179,12 +198,34 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 	while (strcmp(model_config->string, "text_config") != 0) {
 		model_config = model_config->next;
 	}
-	model->config.dim = cJSON_GetObjectItem(model_config, "hidden_size")->valueint;
-	model->config.ffn_dim = cJSON_GetObjectItem(model_config, "intermediate_size")->valueint;
 	model->config.global_head_dim = cJSON_GetObjectItem(model_config, "global_head_dim")->valueint;
-	model->config.n_heads = cJSON_GetObjectItem(model_config, "num_attention_heads")->valueint;
+	model->config.local_head_dim = cJSON_GetObjectItem(model_config, "head_dim")->valueint;
+	model->config.hidden_size = cJSON_GetObjectItem(model_config, "hidden_size")->valueint;
+	model->config.n_q_heads = cJSON_GetObjectItem(model_config, "num_attention_heads")->valueint;
+	model->config.n_kv_heads = cJSON_GetObjectItem(model_config, "num_key_value_heads")->valueint;
+	model->config.n_hidden_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
+	model->config.ffn_dim = cJSON_GetObjectItem(model_config, "intermediate_size")->valueint;
 	model->config.vocab_size = cJSON_GetObjectItem(model_config, "vocab_size")->valueint;
-	model->config.n_layers = cJSON_GetObjectItem(model_config, "num_hidden_layers")->valueint;
+	model->config.rms_norm_eps = cJSON_GetObjectItem(model_config, "rms_norm_eps")->valueint;
+	model->config.sliding_window = cJSON_GetObjectItem(model_config, "sliding_window")->valueint;
+
+	cJSON* rope_config = model_config->child;
+	while (strcmp(rope_config->string, "rope_parameters") != 0) {
+		rope_config = rope_config->next;
+	}
+
+	cJSON* full_att_rope_config = rope_config->child;
+	while (strcmp(full_att_rope_config->string, "full_attention") != 0) {
+		full_att_rope_config = full_att_rope_config->next;
+	}
+	model->config.partial_rotary_factor = cJSON_GetObjectItem(full_att_rope_config, "partial_rotary_factor")->valueint;
+	model->config.global_rope_theta = cJSON_GetObjectItem(full_att_rope_config, "rope_theta")->valueint;
+
+	cJSON* local_att_rope_config = rope_config->child;
+	while (strcmp(local_att_rope_config->string, "sliding_attention") != 0) {
+		local_att_rope_config = local_att_rope_config->next;
+	}
+	model->config.local_rope_theta = cJSON_GetObjectItem(local_att_rope_config, "rope_theta")->valueint;
 
 	cJSON_Delete(model_config_root);
 	return;
@@ -200,7 +241,7 @@ static void print_model(const Model* const model)
         - n_heads: %d\n\t\
         - vocab_size: %d\n\t\
         - n_layers: %d\n",
-		model->config.dim, model->config.ffn_dim, model->config.global_head_dim, model->config.n_heads, model->config.vocab_size, model->config.n_layers);
+		model->config.hidden_size, model->config.ffn_dim, model->config.global_head_dim, model->config.n_q_heads, model->config.vocab_size, model->config.n_hidden_layers);
 	return;
 }
 
@@ -245,11 +286,11 @@ static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_f
 	CHECK_ERROR(exec_ctx_create(e_ctx));
 
 	model_parse_config(*e_ctx, model, model_config_filepath);
-	const u64 rms_input_ptrs_bsize = model->config.n_layers * sizeof *model->weights.rms_input;  // this is n_layers * size of a bf16 pointer
-	const u64 wq_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wq;
-	const u64 wk_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wk;
-	const u64 wv_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wv;
-	const u64 wo_ptrs_bsize = model->config.n_layers * sizeof *model->weights.wo;
+	const u64 rms_input_ptrs_bsize = model->config.n_hidden_layers * sizeof *model->weights.rms_input;  // this is n_layers * size of a bf16 pointer
+	const u64 wq_ptrs_bsize = model->config.n_hidden_layers * sizeof *model->weights.wq;
+	const u64 wk_ptrs_bsize = model->config.n_hidden_layers * sizeof *model->weights.wk;
+	const u64 wv_ptrs_bsize = model->config.n_hidden_layers * sizeof *model->weights.wv;
+	const u64 wo_ptrs_bsize = model->config.n_hidden_layers * sizeof *model->weights.wo;
 
 	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), rms_input_ptrs_bsize, (void**)&(model->weights.rms_input)));
 	CHECK_ERROR(arena_host_push((HostArena*)(*e_ctx), wq_ptrs_bsize, (void**)&(model->weights.wq)));
@@ -414,7 +455,7 @@ int main(void)
 
 	// Do this allocation first
 	bf16*     _d_input_embeddings = NULL;
-	const u64 input_embeddings_bsize = input_tokens_len * model.config.dim * sizeof *_d_input_embeddings;
+	const u64 input_embeddings_bsize = input_tokens_len * model.config.hidden_size * sizeof *_d_input_embeddings;
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, input_embeddings_bsize, (void**)&_d_input_embeddings));
 
 	// So that we can pop this allocation
@@ -424,7 +465,7 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
-	dim3 block_size = model.config.dim / 4;  // 1 thread per 4 elements
+	dim3 block_size = model.config.hidden_size / 4;  // 1 thread per 4 elements
 	if (block_size.x > dev_prop.maxThreadsPerBlock) {
 		fprintf(stderr, "threads launched for k_fetch_input_embeddings exceeds max number of threads per block for this device\n");
 		exit(EXIT_FAILURE);
@@ -432,11 +473,11 @@ int main(void)
 	dim3 grid_size = input_tokens_len;  // one block per token
 	// print_dev_buf_u32(e_ctx, _d_input_tokens, input_tokens_len * sizeof *_d_input_tokens);
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
-	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.dim, model.weights.token_embedding_table, _d_input_embeddings);
+	k_fetch_input_embeddings<<<grid_size, block_size>>>(_d_input_tokens, input_tokens_len, model.config.hidden_size, model.weights.token_embedding_table, _d_input_embeddings);
 	CHECK_CUDA(cudaDeviceSynchronize());
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 
-	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.dim, model.weights.rms_input[0]);
+	k_rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model.config.hidden_size, model.weights.rms_input[0]);
 	CHECK_CUDA(cudaDeviceSynchronize());
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
@@ -448,7 +489,7 @@ int main(void)
     * 3. Perform 3 GEMMs
     */
 
-	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_heads * sizeof **model.weights.wq;
+	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
 
 	bf16* q = NULL;
 	bf16* k = NULL;
@@ -462,23 +503,23 @@ int main(void)
 	// TODO: Have some sort of failsafe in case we try to use more than the device has
 	// TODO: This should go into a kernel wrapper
 	const u32 tiling_block_size = 32;
-	grid_size = dim3(CEIL_DIVI(model.config.dim, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
+	grid_size = dim3(CEIL_DIVI(model.config.hidden_size, tiling_block_size), CEIL_DIVI(input_tokens_len, tiling_block_size));
 	block_size = dim3(tiling_block_size, tiling_block_size);
 	// I need enough smem for 2 32x32 BF16 matrices
 	const u64 smem_dyn_size = 2 * tiling_block_size * tiling_block_size * sizeof *model.weights.wq[0];
 
 	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
 	cudaStream_t* stream_buf = nullptr;
-	create_stream_buf(e_ctx, &stream_buf, model.config.n_heads);
+	create_stream_buf(e_ctx, &stream_buf, model.config.n_q_heads);
 
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[0]>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[1]>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
-	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[2]>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.dim, model.config.global_head_dim * model.config.n_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[0]>>>(_d_input_embeddings, model.weights.wq[0], q, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[1]>>>(_d_input_embeddings, model.weights.wk[0], k, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
+	k_gemmt<<<grid_size, block_size, smem_dyn_size, stream_buf[2]>>>(_d_input_embeddings, model.weights.wv[0], v, tiling_block_size, input_tokens_len, model.config.hidden_size, model.config.global_head_dim * model.config.n_q_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
-	k_prope(q, input_tokens_len, model.config.n_heads * model.config.global_head_dim, stream_buf[0]);
-	k_prope(q, input_tokens_len, model.config.n_heads * model.config.global_head_dim, stream_buf[1]);
+	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[0]);
+	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	// TODO:
@@ -487,7 +528,7 @@ int main(void)
 	// 3. Partition V into heads
 	// 4. Attention
 
-	destroy_stream_buf(stream_buf, model.config.n_heads);
+	destroy_stream_buf(stream_buf, model.config.n_q_heads);
 
 	model_destroy(&e_ctx, &model);
 

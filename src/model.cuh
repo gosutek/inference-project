@@ -6,12 +6,20 @@
 
 typedef struct Config
 {
-	u32 dim;              // 1536 for gemma-4-E2B-it
-	u32 ffn_dim;          // 6144 for gemma-4-E2B-it
-	u32 global_head_dim;  // 512 for gemma-4-E2B-it
-	u32 n_heads;          // 8 for gemma-4-E2B-it
-	u32 vocab_size;       // 262,144 tokens for gemma-4-E2B-it
-	u32 n_layers;         // 35 layers for gemma-4-E2B-it
+	// Numbers for gemma-4-E2B-it
+	u32 global_head_dim;        // 512
+	u32 local_head_dim;         // 256
+	u32 hidden_size;            // 1536
+	u32 n_q_heads;              // 8
+	u32 n_kv_heads;             // 1
+	u32 n_hidden_layers;        // 35
+	u32 ffn_dim;                // 6144
+	u32 vocab_size;             // 262,144
+	u32 rms_norm_eps;           // 1e-06
+	u32 sliding_window;         // 512
+	u32 partial_rotary_factor;  // 0.25
+	u32 global_rope_theta;      // 1e6
+	u32 local_rope_theta;       // 1e4
 } Config;
 
 typedef struct Weights
@@ -41,10 +49,10 @@ typedef struct Weights
 	// f32* rms_post_ffn; // TODO: For later
 
 	// Attention
-	// 35 pointers, one for each layer, each pointing to a bf16 flat matrix in device memory of size [1536, 4096] (already transposed)
-	bf16** wq;
-	bf16** wk;
-	bf16** wv;
+	// 35 pointers, one for each layer, each pointing to a bf16 flat matrix in device memory
+	bf16** wq;  // (1536, 4096)
+	bf16** wk;  // (1536, 512)
+	bf16** wv;  // (1536, 512)
 	bf16** wo;
 
 	// FFN
