@@ -22,7 +22,8 @@
 #include "model.cuh"
 #include "tokenizer.h"
 
-const u32 MAX_SEQ_LEN = 512;
+#define MAX_INPUT_SEQ_LEN 512
+#define MAX_TOTAL_SEQ_LEN 1024
 
 static Error_t print_dev_buf_u32(ExecCtx* const e_ctx, u32* src, const u64 bsize)
 {
@@ -139,7 +140,7 @@ static Error_t get_file_bsize(const char* filepath, u64* const bsize)
 }
 
 // TODO: You can make a struct out of this that keeps track of the bsize
-static Error_t create_stream_buf(ExecCtx* const e_ctx, cudaStream_t** stream_buf, const u64 n_heads)
+static Error_t stream_buf_create(ExecCtx* const e_ctx, cudaStream_t** stream_buf, const u64 n_heads)
 {
 	if (*stream_buf != nullptr) {
 		return ErrorAlreadyInitialized;
@@ -153,7 +154,7 @@ static Error_t create_stream_buf(ExecCtx* const e_ctx, cudaStream_t** stream_buf
 	return Success;
 }
 
-static Error_t destroy_stream_buf(cudaStream_t* stream_buf, const u64 n_heads)
+static Error_t stream_buf_destroy(cudaStream_t* stream_buf, const u64 n_heads)
 {
 	if (!*stream_buf) {
 		return ErrorInvalidValue;
@@ -244,7 +245,7 @@ static void model_parse_config(ExecCtx* const e_ctx, Model* const model, const c
 	return;
 }
 
-static void print_model(const Model* const model)
+static void model_print(const Model* const model)
 {
 	printf(
 		"Model Configuration:\n\t\
@@ -441,6 +442,47 @@ static void model_destroy(ExecCtx** e_ctx, Model* model)
 	CHECK_ERROR(exec_ctx_destroy(e_ctx));
 }
 
+// TODO: Maybe move this process inside the parse model config function?
+Error_t gemma4_get_layer_ratio(const u32 n_layers, char** const layer_types, u32* const out_n_global_layers, u32* const out_n_local_layers)
+{
+	for (u32 i = 0; i < n_layers; ++i) {
+		if (strcmp(layer_types[i], "sliding_attention") == 0) {
+			++(*out_n_local_layers);
+		} else if (strcmp(layer_types[i], "full_attention") == 0) {
+			++(*out_n_global_layers);
+		} else {
+			fprintf(stderr, "Unexpected layer type\n");
+			return ErrorUnexpectedValue;
+		}
+	}
+	return Success;
+}
+
+void cache_init(
+	ExecCtx* const e_ctx, bf16*** out_ptr,
+	const u32 global_head_dim, const u32 local_head_dim, const u32 n_kv_heads,
+	const u32 n_layers, char** const layer_types)
+{
+	u32 n_global_layers = 0;
+	u32 n_local_layers = 0;
+
+	CHECK_ERROR(gemma4_get_layer_ratio(n_layers, layer_types, &n_global_layers, &n_local_layers));
+
+#ifndef NDEBUG
+	// if this doesn't pass then you're not running gemma4
+	assert(n_global_layers == 7);
+	assert(n_local_layers == 28);
+#endif
+
+	const u64 local_layer_total_kv_bsize = (MAX_INPUT_SEQ_LEN * local_head_dim * n_kv_heads * sizeof ***out_ptr) * n_local_layers;
+	const u64 global_layer_total_kv_bsize = (MAX_INPUT_SEQ_LEN * global_head_dim * n_kv_heads * sizeof ***out_ptr) * n_global_layers;
+
+	const u64 total_kv_cache_bsize = local_layer_total_kv_bsize + global_layer_total_kv_bsize;
+
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, total_kv_cache_bsize, (void**)out_ptr));
+	return;
+}
+
 int main(void)
 {
 	// print_dev_props();
@@ -478,13 +520,29 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
+	/*
+ * +------------------------------------------------------------------------------+
+ * |                                 LAYER LOOP                                   |
+ * +------------------------------------------------------------------------------+
+ */
+
+	cache_init(e_ctx, &model.kv_cache, model.config.global_head_dim, model.config.local_head_dim, model.config.n_kv_heads, model.config.n_hidden_layers, model.config.layer_types);
+
+	for (u32 layer_idx = 0; layer_idx < model.config.n_hidden_layers; ++layer_idx) {
+		if (strcmp(model.config.layer_types[layer_idx], "sliding_attention") == 0) {
+		} else if (strcmp(model.config.layer_types[layer_idx], "full_attention") == 0) {
+		} else {
+			fprintf(stderr, "Unexpected layer type\n");
+			return 1;
+		}
+	}
+
 	CHECK_ERROR(k_input_emb(&model, _d_input_tokens, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
-
 	CHECK_ERROR(k_rmsnorm(&model, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
-	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);
+	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);  // Can't really pop them if I'm in a loop
 
 	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
 
@@ -502,7 +560,7 @@ int main(void)
 
 	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
 	cudaStream_t* stream_buf = nullptr;
-	create_stream_buf(e_ctx, &stream_buf, model.config.n_q_heads);
+	stream_buf_create(e_ctx, &stream_buf, model.config.n_q_heads);
 
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
 	k_gemmt(_d_input_embeddings, model.weights.wq[0], q, model.config.hidden_size, stream_buf[0], input_tokens_len, model.config.global_head_dim * model.config.n_q_heads);
@@ -514,7 +572,7 @@ int main(void)
 	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
-	destroy_stream_buf(stream_buf, model.config.n_q_heads);
+	stream_buf_destroy(stream_buf, model.config.n_q_heads);
 
 	model_destroy(&e_ctx, &model);
 

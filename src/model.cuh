@@ -72,12 +72,17 @@ typedef struct Model
 {
 	Config    config;
 	Weights   weights;
-	bf16*     data;
 	Tokenizer tokenizer;
+	bf16*     data;
+	bf16**    kv_cache;
+
+	// Caching
+	// 35 * 2 pointers, two for each layer, one for K and one for V each pointing to
 
 	i32 fd;
 
 	u64 file_bsize;
 	u64 header_bsize;
 	u64 model_bsize;
+
 } Model;
