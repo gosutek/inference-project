@@ -470,8 +470,8 @@ Error_t cache_init(
 	assert(n_local_layers == 28);
 #endif
 
-	const u64 local_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * local_head_dim * n_kv_heads * sizeof **model->kv_cache->k);
-	const u64 global_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * global_head_dim * n_kv_heads * sizeof **model->kv_cache->k);
+	const u64 local_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * local_head_dim * n_kv_heads * sizeof *model->kv_cache->k);
+	const u64 global_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * global_head_dim * n_kv_heads * sizeof *model->kv_cache->k);
 
 	const u64 local_layer_total_kv_bsize = local_layer_single_kv_bsize * n_local_layers;
 	const u64 global_layer_total_kv_bsize = global_layer_single_kv_bsize * n_global_layers;
@@ -539,15 +539,11 @@ int main(void)
  */
 
 	CHECK_ERROR(cache_init(e_ctx, &model, model.config.global_head_dim, model.config.local_head_dim, model.config.n_kv_heads, model.config.n_hidden_layers, model.config.layer_types));
-
-	for (u32 layer_idx = 0; layer_idx < model.config.n_hidden_layers; ++layer_idx) {
-		if (strcmp(model.config.layer_types[layer_idx], "sliding_attention") == 0) {
-		} else if (strcmp(model.config.layer_types[layer_idx], "full_attention") == 0) {
-		} else {
-			fprintf(stderr, "Unexpected layer type\n");
-			return 1;
-		}
-	}
+	/*
+  * +------------------------------------------------------------------------------+
+  * |                                 LAYER LOOP                                   |
+  * +------------------------------------------------------------------------------+
+*/
 
 	CHECK_ERROR(k_input_emb(&model, _d_input_tokens, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());

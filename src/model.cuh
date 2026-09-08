@@ -70,8 +70,8 @@ typedef struct Weights
 
 typedef struct KVCache
 {
-	bf16** k;
-	bf16** v;
+	bf16* k;
+	bf16* v;
 } KVCache;
 
 typedef struct Model
