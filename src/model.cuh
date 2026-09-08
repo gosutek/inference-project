@@ -68,14 +68,20 @@ typedef struct Weights
 
 } Weights;
 
+typedef struct KVCache
+{
+	bf16** k;
+	bf16** v;
+} KVCache;
+
 typedef struct Model
 {
 	Config    config;
 	Weights   weights;
 	Tokenizer tokenizer;
 	bf16*     data;
-	bf16**    kv_cache;
 
+	KVCache* kv_cache;
 	// Caching
 	// 35 * 2 pointers, two for each layer, one for K and one for V each pointing to
 
