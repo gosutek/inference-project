@@ -282,7 +282,7 @@ static Error_t model_parse_header(ExecCtx* const e_ctx, Model* const model, FILE
 	return Success;
 }
 
-static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
+static Error_t model_build(ExecCtx** e_ctx, Model* const model, const char* model_filepath, const char* model_config_filepath)
 {
 	CHECK_ERROR(get_file_bsize(model_filepath, &model->file_bsize));
 
@@ -340,7 +340,36 @@ static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_f
 	}
 
 	model->model_bsize = lm_offset_end - lm_offset_start;
-	const u64 padded_dev_alloc_bsize = model->model_bsize + PADDING_POW2(model->model_bsize, GIB(1));
+
+	u32 n_global_layers = 0;
+	u32 n_local_layers = 0;
+
+	for (u32 i = 0; i < model->config.n_hidden_layers; ++i) {
+		if (strcmp(model->config.layer_types[i], "sliding_attention") == 0) {
+			++n_local_layers;
+		} else if (strcmp(model->config.layer_types[i], "full_attention") == 0) {
+			++n_global_layers;
+		} else {
+			fprintf(stderr, "Unexpected layer type\n");
+			return ErrorUnexpectedValue;
+		}
+	}
+
+#ifndef NDEBUG
+	// if this doesn't pass then you're not running gemma4
+	assert(n_global_layers == 7);
+	assert(n_local_layers == 28);
+#endif
+
+	model->local_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * model->config.local_head_dim * model->config.n_kv_heads * sizeof *model->kv_cache->k);
+	model->global_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * model->config.global_head_dim * model->config.n_kv_heads * sizeof *model->kv_cache->k);
+
+	model->local_layer_total_kv_bsize = model->local_layer_single_kv_bsize * n_local_layers;
+	model->global_layer_total_kv_bsize = model->global_layer_single_kv_bsize * n_global_layers;
+
+	const u64 total_kv_cache_bsize = model->local_layer_total_kv_bsize + model->global_layer_total_kv_bsize;
+
+	const u64 padded_dev_alloc_bsize = model->model_bsize + total_kv_cache_bsize + PADDING_POW2(model->model_bsize, GIB(1));
 	CHECK_ERROR(arena_dev_create(&(*e_ctx)->dev_arena, padded_dev_alloc_bsize));
 
 	CHECK_ERROR(arena_dev_push(&(*e_ctx)->dev_arena, model->model_bsize, (void**)&model->data));
@@ -433,7 +462,7 @@ static void model_build(ExecCtx** e_ctx, Model* const model, const char* model_f
 	cJSON_Delete(header_root);
 	munmap(model_mmap, model->file_bsize);
 	fclose(file);
-	return;
+	return Success;
 }
 
 static void model_destroy(ExecCtx** e_ctx, Model* model)
@@ -450,42 +479,22 @@ Error_t cache_init(
 	const u64 kv_cache_buf_bsize = (n_layers * sizeof *model->kv_cache);                            // ... * 2 -> one for K one for V
 	CHECK_ERROR(arena_host_push((HostArena*)e_ctx, kv_cache_buf_bsize, (void**)&model->kv_cache));  // this should be pushing space for a 35 * 2 buffer of bf16**
 
-	u32 n_global_layers = 0;
-	u32 n_local_layers = 0;
-
-	for (u32 i = 0; i < n_layers; ++i) {
-		if (strcmp(layer_types[i], "sliding_attention") == 0) {
-			++n_local_layers;
-		} else if (strcmp(layer_types[i], "full_attention") == 0) {
-			++n_global_layers;
-		} else {
-			fprintf(stderr, "Unexpected layer type\n");
-			return ErrorUnexpectedValue;
-		}
-	}
-
-#ifndef NDEBUG
-	// if this doesn't pass then you're not running gemma4
-	assert(n_global_layers == 7);
-	assert(n_local_layers == 28);
-#endif
-
-	const u64 local_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * local_head_dim * n_kv_heads * sizeof *model->kv_cache->k);
-	const u64 global_layer_single_kv_bsize = (MAX_INPUT_SEQ_LEN * global_head_dim * n_kv_heads * sizeof *model->kv_cache->k);
-
-	const u64 local_layer_total_kv_bsize = local_layer_single_kv_bsize * n_local_layers;
-	const u64 global_layer_total_kv_bsize = global_layer_single_kv_bsize * n_global_layers;
-
-	const u64 total_kv_cache_bsize = local_layer_total_kv_bsize + global_layer_total_kv_bsize;
+	const u64 total_kv_cache_bsize = model->local_layer_total_kv_bsize + model->global_layer_total_kv_bsize;
 
 	u8* partition_ptr = NULL;
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, total_kv_cache_bsize, (void**)&partition_ptr));
 
 	for (u32 i = 0; i < n_layers; ++i) {
 		if (strcmp(layer_types[i], "sliding_attention") == 0) {
-			model->kv_cache[i].k = (bf16**)partition_ptr + i * local_layer_single_kv_bsize;
+			model->kv_cache[i].k = (bf16*)partition_ptr;
+			model->kv_cache[i].v = model->kv_cache[i].k + model->local_layer_single_kv_bsize;
+
+			partition_ptr += 2 * model->local_layer_single_kv_bsize;
 		} else if (strcmp(layer_types[i], "full_attention") == 0) {
-			model->kv_cache[i].k = (bf16**)partition_ptr + i * global_layer_single_kv_bsize;
+			model->kv_cache[i].k = (bf16*)partition_ptr;
+			model->kv_cache[i].v = model->kv_cache[i].k + model->global_layer_single_kv_bsize;
+
+			partition_ptr += 2 * model->global_layer_single_kv_bsize;
 		} else {
 			fprintf(stderr, "Unexpected layer type\n");
 			return ErrorUnexpectedValue;
@@ -532,12 +541,6 @@ int main(void)
 	CHECK_ERROR(cu_memcpy_htd(_d_input_tokens, _h_input_tokens, input_tokens_bsize));
 	arena_host_pop_at((HostArena*)e_ctx, pop_pos);
 
-	/*
- * +------------------------------------------------------------------------------+
- * |                                 LAYER LOOP                                   |
- * +------------------------------------------------------------------------------+
- */
-
 	CHECK_ERROR(cache_init(e_ctx, &model, model.config.global_head_dim, model.config.local_head_dim, model.config.n_kv_heads, model.config.n_hidden_layers, model.config.layer_types));
 	/*
   * +------------------------------------------------------------------------------+
@@ -572,12 +575,12 @@ int main(void)
 
 	// BUG: I don't think this'll work for input sequence length that is *not* a multiple of 32
 	k_gemmt(_d_input_embeddings, model.weights.wq[0], q, model.config.hidden_size, stream_buf[0], input_tokens_len, model.config.global_head_dim * model.config.n_q_heads);
-	k_gemmt(_d_input_embeddings, model.weights.wk[0], k, model.config.hidden_size, stream_buf[1], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
-	k_gemmt(_d_input_embeddings, model.weights.wv[0], v, model.config.hidden_size, stream_buf[2], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
+	k_gemmt(_d_input_embeddings, model.weights.wk[0], model.kv_cache[0].k, model.config.hidden_size, stream_buf[1], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
+	k_gemmt(_d_input_embeddings, model.weights.wv[0], model.kv_cache[0].v, model.config.hidden_size, stream_buf[2], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[0]);
-	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
+	k_prope(model.kv_cache[0].k, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	stream_buf_destroy(stream_buf, model.config.n_q_heads);

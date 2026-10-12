@@ -81,6 +81,12 @@ typedef struct Model
 	Tokenizer tokenizer;
 	bf16*     data;
 
+	u64 local_layer_single_kv_bsize;
+	u64 local_layer_total_kv_bsize;
+
+	u64 global_layer_single_kv_bsize;
+	u64 global_layer_total_kv_bsize;
+
 	KVCache* kv_cache;
 	// Caching
 	// 35 * 2 pointers, two for each layer, one for K and one for V each pointing to
