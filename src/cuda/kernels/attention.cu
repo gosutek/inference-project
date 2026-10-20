@@ -61,6 +61,53 @@ __device__ void __attn_rowmax(
 	}
 }
 
+__device__ void __attn_correction_factor(
+	const bf16* const ss,
+	const bf16* const sm,
+	bf16* const       sp,
+	const u32 br, const u32 bc)
+{
+	const u32 c_row = threadIdx.x / br;
+	const u32 c_col = MOD_POW2(threadIdx.x, bc);
+
+	const u32 warp_id = threadIdx.x / _CONSTANTS_WARP_SIZE;
+	const u32 lane_id = MOD_POW2(threadIdx.x, _CONSTANTS_WARP_SIZE);
+
+	// NOTE: Broadcast approach
+	// if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
+	// 	rowmax = _d_dn_rm_get(sm, bc, 0, c_row);
+	// }
+	// rowmax = __shfl_sync(0xffffffff, rowmax, 0, _CONSTANTS_WARP_SIZE_HALF);  // broadcast to all threads in the two warp partitions
+
+	// NOTE: Copy from the buffer approach
+	const f32 rowmax = __bfloat162float(_d_dn_rm_get(sm, bc, 0, c_row));
+	const f32 score = __bfloat162float(_d_dn_rm_get(ss, bc, c_row, c_col));
+	const f32 p = expf(score - rowmax);
+	_d_dn_rm_set(sp, bc, c_row, c_col, __float2bfloat16(p));
+}
+
+__device__ void __attn_rowsum(
+	const bf16* const sp,
+	bf16* const       sl,
+	const u32 br, const u32 bc)
+{
+	const u32 c_row = threadIdx.x / br;
+	const u32 c_col = MOD_POW2(threadIdx.x, bc);
+
+	const u32 warp_id = threadIdx.x / _CONSTANTS_WARP_SIZE;
+	const u32 lane_id = MOD_POW2(threadIdx.x, _CONSTANTS_WARP_SIZE);
+
+	f32 acc = 0.0f;
+	f32 val = __bfloat162float(_d_dn_rm_get(sp, br, c_row, c_col));
+	for (u32 offset = _CONSTANTS_WARP_SIZE_HALF / 2; offset > 0; offset /= 2) {
+		acc += __shfl_xor_sync(0xffffffff, val, offset, _CONSTANTS_WARP_SIZE_HALF);
+	}
+
+	if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
+		_d_dn_rm_set(sl, bc, 0, c_row, __float2bfloat16(acc));
+	}
+}
+
 __global__ void __attn_global(
 	const bf16* const __restrict__ q,
 	const bf16* const __restrict__ k,
@@ -82,6 +129,7 @@ __global__ void __attn_global(
 	bf16* const sl = so + br * head_dim;
 	bf16* const sm = sl + br;
 	bf16* const ss = sm + br;
+	bf16* const sp = ss + br * bc;
 
 	for (u32 r = blockIdx.x * br; r < (blockIdx.x + 1) * br; ++r) {                              // iterating over the 16 rows of the 16x512 FA tile
 		bf16 val = _d_dn_rm_get(q, q_heads * head_dim, r, blockIdx.y * head_dim + threadIdx.x);  // blockIdx.y here plays the role of a head
@@ -111,10 +159,15 @@ __global__ void __attn_global(
 			val = _d_dn_rm_get(v, kv_heads * head_dim, i_tile * br + tile_row, threadIdx.x);
 			_d_dn_rm_set(sv, kv_heads * head_dim, tile_row, threadIdx.x, val);
 		}
+
+		// NOTE: Don't know if I can avoid this, i.e. deactivating half the threads of the block.
 		if (threadIdx.x < br * bc) {
 			__attn_gemmt(sq, sk, ss, br, head_dim, bc);
 			__syncthreads();
 			__attn_rowmax(ss, sm, br, bc);
+			__syncwarp();
+			__attn_correction_factor(ss, sm, sp, br, bc);
+			__syncwarp();
 		}
 	}
 }
