@@ -15,6 +15,7 @@
 #include "cuda_helpers.cuh"
 #include "cuda_mem_wrapper.cuh"
 #include "helpers.h"
+#include "kernels/attention.cuh"
 #include "kernels/gemm.cuh"
 #include "kernels/input_embeddings.cuh"
 #include "kernels/prope.cuh"
@@ -550,6 +551,7 @@ int main(void)
 
 	CHECK_ERROR(k_input_emb(&model, _d_input_tokens, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
+	// TODO: Cache X
 	CHECK_ERROR(k_rmsnorm(&model, _d_input_embeddings, input_tokens_len));
 	CHECK_CUDA(cudaDeviceSynchronize());
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
@@ -570,6 +572,7 @@ int main(void)
 	// TODO: This should go into a kernel wrapper
 
 	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
+	// TODO: NEW: I don't need streams actually. Remove them at some point
 	cudaStream_t* stream_buf = nullptr;
 	stream_buf_create(e_ctx, &stream_buf, model.config.n_q_heads);
 
@@ -577,10 +580,18 @@ int main(void)
 	k_gemmt(_d_input_embeddings, model.weights.wq[0], q, model.config.hidden_size, stream_buf[0], input_tokens_len, model.config.global_head_dim * model.config.n_q_heads);
 	k_gemmt(_d_input_embeddings, model.weights.wk[0], model.kv_cache[0].k, model.config.hidden_size, stream_buf[1], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
 	k_gemmt(_d_input_embeddings, model.weights.wv[0], model.kv_cache[0].v, model.config.hidden_size, stream_buf[2], input_tokens_len, model.config.global_head_dim * model.config.n_kv_heads);
-	CHECK_CUDA(cudaDeviceSynchronize());
+	CHECK_CUDA(cudaStreamSynchronize(stream_buf[0]));
+	CHECK_CUDA(cudaStreamSynchronize(stream_buf[1]));
 
 	k_prope(q, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[0]);
-	k_prope(model.kv_cache[0].k, input_tokens_len, model.config.n_q_heads * model.config.global_head_dim, stream_buf[1]);
+	k_prope(model.kv_cache[0].k, input_tokens_len, model.config.global_head_dim, stream_buf[1]);
+	CHECK_CUDA(cudaStreamSynchronize(stream_buf[0]));
+	CHECK_CUDA(cudaStreamSynchronize(stream_buf[1]));
+	CHECK_CUDA(cudaStreamSynchronize(stream_buf[2]));
+
+	const dim3 attn_grid = dim3(50, model.config.n_q_heads);
+	const dim3 attn_block = dim3(512);
+	__attn_global<<<attn_grid, attn_block, 98304>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, NULL, NULL, NULL, input_tokens_len, 0, 16, 16, 50, 50, model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	stream_buf_destroy(stream_buf, model.config.n_q_heads);

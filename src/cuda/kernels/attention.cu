@@ -1,5 +1,7 @@
 #include "attention.cuh"
+#include "cuda_helpers.cuh"
 #include "helpers.h"
+#include <__clang_cuda_builtin_vars.h>
 
 /**
  * This kernel gets its own separate file
@@ -7,23 +9,56 @@
  * and keep an archive of older versions
 **/
 
-__device__ bf16 __gemmt(
+__device__ bf16 __attn_gemmt(
 	const bf16* const __restrict__ a,  // expect rm, smem
 	const bf16* const __restrict__ b,  // expect rm, smem
 	bf16* const __restrict__ c,        // output rm, smem
-	const u32 block_size,
 	const u32 m,
 	const u32 k,
 	const u32 n)
 {
 	// every block needs to output a 16x16 = 256
 	// every block has 512 threads
-	// one warp per two rows (or columns doesn't matter) of Sij
 
+	// TODO: Add a check that n is a power of 2
 	const u32 c_row = threadIdx.x / m;
-	const u32 c_col = MOD_POW2(threadIdx.x, m);
+	const u32 c_col = MOD_POW2(threadIdx.x, n);
 
 	bf16 acc = 0.0;
+	for (u32 i = 0; i < k; ++i) {
+		acc += _d_dn_rm_get(a, k, c_row, i) * _d_dn_rm_get(b, k, c_col, i);
+	}
+	return acc;
+}
+
+__device__ void __attn_rowmax(
+	const bf16* const ss,
+	bf16* const       sm,
+	const u32 br, const u32 bc)
+{
+	// one warp per two rows
+	// I still need 16 * 16 threads
+
+	const u32 c_row = threadIdx.x / br;
+	const u32 c_col = MOD_POW2(threadIdx.x, bc);
+
+	const u32 warp_id = threadIdx.x / _CONSTANTS_WARP_SIZE;
+	const u32 lane_id = MOD_POW2(threadIdx.x, _CONSTANTS_WARP_SIZE);
+
+	// the goal is to:
+	// - make lane_id ~ 0 of warp_id ~ 0 hold the rowmax of row 0
+	// - make lane_id ~ 16 of warp_id ~ 0 hold the rowmax of row 1
+	// - make lane_id ~ 0 of warp_id ~ 1 hold the rowmax of row 2
+	// - make lane_id ~ 16 of warp_id ~ 1 hold the rowmax of row 2
+
+	bf16 local_max = _d_dn_rm_get(ss, bc, c_row, c_col);
+	for (u32 offset = _CONSTANTS_WARP_SIZE_HALF / 2; offset > 0; offset /= 2) {
+		local_max = MAX(local_max, __shfl_xor_sync(0xffffffff, local_max, offset, _CONSTANTS_WARP_SIZE_HALF));
+	}
+
+	if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
+		_d_dn_rm_set(sm, bc, 0, c_row, local_max);
+	}
 }
 
 __global__ void __attn_global(
@@ -33,7 +68,7 @@ __global__ void __attn_global(
 	bf16* const __restrict__ o,
 	bf16* const __restrict__ l,
 	bf16* const __restrict__ m,
-	const u32 n, const u32 dim,
+	const u32 n, const u32 dim,  // dim is unused
 	const u32 bc, const u32 br, const u32 tc, const u32 tr, const u32 q_heads, const u32 kv_heads, const u32 head_dim)
 {
 	// grid of size (Tr, q heads) = (50, 8)
@@ -46,6 +81,7 @@ __global__ void __attn_global(
 	bf16* const so = sq + br * head_dim;
 	bf16* const sl = so + br * head_dim;
 	bf16* const sm = sl + br;
+	bf16* const ss = sm + br;
 
 	for (u32 r = blockIdx.x * br; r < (blockIdx.x + 1) * br; ++r) {                              // iterating over the 16 rows of the 16x512 FA tile
 		bf16 val = _d_dn_rm_get(q, q_heads * head_dim, r, blockIdx.y * head_dim + threadIdx.x);  // blockIdx.y here plays the role of a head
@@ -75,6 +111,10 @@ __global__ void __attn_global(
 			val = _d_dn_rm_get(v, kv_heads * head_dim, i_tile * br + tile_row, threadIdx.x);
 			_d_dn_rm_set(sv, kv_heads * head_dim, tile_row, threadIdx.x, val);
 		}
-		__syncthreads();
+		if (threadIdx.x < br * bc) {
+			__attn_gemmt(sq, sk, ss, br, head_dim, bc);
+			__syncthreads();
+			__attn_rowmax(ss, sm, br, bc);
+		}
 	}
 }

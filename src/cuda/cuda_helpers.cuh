@@ -15,6 +15,7 @@ typedef __nv_bfloat16 bf16;
 */
 
 constexpr u8 _CONSTANTS_WARP_SIZE = 32;
+constexpr u8 _CONSTANTS_WARP_SIZE_HALF = 16;
 
 /*
   * +------------------------------------------------------------------------------+
