@@ -19,5 +19,5 @@ __global__ void __attn_global(
 	bf16* const __restrict__ o,
 	bf16* const __restrict__ l,
 	bf16* const __restrict__ m,
-	const u32 n, const u32 dim,  // dim is unused
+	const u32 n,
 	const u32 bc, const u32 br, const u32 tc, const u32 tr, const u32 q_heads, const u32 kv_heads, const u32 head_dim);

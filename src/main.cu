@@ -25,6 +25,8 @@
 
 #define MAX_INPUT_SEQ_LEN 512
 #define MAX_TOTAL_SEQ_LEN 1024
+#define FLASH_ATTENTION_TILE_ROW 16
+#define FLASH_ATTENTION_TILE_COLUMN 16
 
 static Error_t print_dev_buf_u32(ExecCtx* const e_ctx, u32* src, const u64 bsize)
 {
@@ -557,21 +559,29 @@ int main(void)
 	// print_dev_buf_bf16(e_ctx, _d_input_embeddings, input_embeddings_bsize);
 	arena_dev_pop(&e_ctx->dev_arena, input_tokens_bsize);  // Can't really pop them if I'm in a loop
 
-	const u64 projected_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
-
 	bf16* q = NULL;
-	bf16* k = NULL;
-	bf16* v = NULL;
+	bf16* o = NULL;
+	bf16* l = NULL;
+	bf16* m = NULL;
 
-	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&q);
-	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&k);
-	arena_dev_push(&e_ctx->dev_arena, projected_bsize, (void**)&v);
+	const u64 q_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
+	const u64 o_bsize = input_tokens_len * model.config.global_head_dim * sizeof **model.weights.wo;
+	const u64 lm_bsize = input_tokens_len * sizeof *l;
+
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, q_bsize, (void**)&q));
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, o_bsize, (void**)&o));
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, lm_bsize, (void**)&l));
+	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, lm_bsize, (void**)&m));
+
+	CHECK_CUDA(cudaMemset(o, 0, input_tokens_len * model.config.global_head_dim * model.config.n_q_heads));
+	CHECK_CUDA(cudaMemset(l, 0, input_tokens_len));
+	CHECK_CUDA(cudaMemset(m, 0, input_tokens_len));
 
 	// NOTE: What if safetensors doesn't provide matrices in row major?
 	// TODO: Have some sort of failsafe in case we try to use more than the device has
 	// TODO: This should go into a kernel wrapper
 
-	// TODO: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
+	// TODO: OLD: Make a struct that keeps track of occuppied streams and returns unoccupied ones for use
 	// TODO: NEW: I don't need streams actually. Remove them at some point
 	cudaStream_t* stream_buf = nullptr;
 	stream_buf_create(e_ctx, &stream_buf, model.config.n_q_heads);
@@ -589,9 +599,14 @@ int main(void)
 	CHECK_CUDA(cudaStreamSynchronize(stream_buf[1]));
 	CHECK_CUDA(cudaStreamSynchronize(stream_buf[2]));
 
-	const dim3 attn_grid = dim3(50, model.config.n_q_heads);
-	const dim3 attn_block = dim3(512);
-	__attn_global<<<attn_grid, attn_block, 98304>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, NULL, NULL, NULL, input_tokens_len, 0, 16, 16, 50, 50, model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
+	const u32 tr = CEIL_DIVI(input_tokens_len, FLASH_ATTENTION_TILE_ROW);
+	const u32 tc = CEIL_DIVI(input_tokens_len, FLASH_ATTENTION_TILE_COLUMN);
+
+	const dim3 attn_grid = dim3(tr, model.config.n_q_heads);
+	const dim3 attn_block = dim3(512);  // TODO: Un-hardcode this
+	__attn_global<<<attn_grid, attn_block, 98304>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o, l, m,
+		input_tokens_len, FLASH_ATTENTION_TILE_COLUMN, FLASH_ATTENTION_TILE_ROW, tc, tr,
+		model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	stream_buf_destroy(stream_buf, model.config.n_q_heads);
