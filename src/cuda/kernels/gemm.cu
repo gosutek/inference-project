@@ -91,6 +91,7 @@ Error_t k_gemmt(const bf16* const a, const bf16* const b, bf16* const c, const u
 	const u64 smem = 2 * tiling_block_size * tiling_block_size * sizeof *a;
 
 	__gemmt<<<grid_size, block_size, smem, stream>>>(a, b, c, tiling_block_size, input_seq_len, hidden_size, n);
+    CHECK_KERNEL();
 
 	return Success;
 }

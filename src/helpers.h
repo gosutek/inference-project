@@ -83,4 +83,14 @@ typedef enum Error_t
 		}                                                                 \
 	} while (0)
 
+#ifndef NDEBUG
+#define CHECK_KERNEL()                                                    \
+    do {                                                                  \
+        CHECK_CUDA(cudaGetLastError());                                   \
+        CHECK_CUDA(cudaDeviceSynchronize());                              \
+    } while (0)
+#else
+#define CHECK_KERNEL() CHECK_CUDA(cudaGetLastError())
+#endif
+
 #endif  // HELPERS_H

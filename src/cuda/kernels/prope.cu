@@ -72,6 +72,7 @@ Error_t k_prope(bf16* const x, const u32 input_sequence_len, const u32 model_dim
 	const dim3 block_size = { TILE_PREF_SIZE, TILE_PREF_SIZE };
 
 	__prope_kernel<<<grid_size, block_size, 0, stream>>>(x, model_dim, input_sequence_len, num_of_active_pairs);
+    CHECK_KERNEL();
 
 	return Success;
 }

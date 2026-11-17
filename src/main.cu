@@ -607,6 +607,7 @@ int main(void)
 	__attn_global<<<attn_grid, attn_block, 98304>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o, l, m,
 		input_tokens_len, FLASH_ATTENTION_TILE_COLUMN, FLASH_ATTENTION_TILE_ROW, tc, tr,
 		model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
+    CHECK_KERNEL();
 	CHECK_CUDA(cudaDeviceSynchronize());
 
 	stream_buf_destroy(stream_buf, model.config.n_q_heads);

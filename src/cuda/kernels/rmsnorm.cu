@@ -71,5 +71,6 @@ Error_t k_rmsnorm(const Model* const model, bf16* const _d_input_embeddings, con
 	const dim3 grid_size = input_seq_len;
 
 	__rmsnorm<<<grid_size, block_size, block_size.x / _CU_CONST_WARP_SIZE>>>(_d_input_embeddings, model->config.hidden_size, model->weights.rms_input[0]);
+    CHECK_KERNEL();
 	return Success;
 }

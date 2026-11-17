@@ -50,6 +50,7 @@ Error_t k_input_emb(const Model* const model, u32* const _d_input_tokens, bf16* 
 
 	// Consult Max Threads per Block : Because model.config.dim > Max Threads per block for 4070
 	__input_emb<<<grid_size, block_size>>>(_d_input_tokens, input_seq_len, model->config.hidden_size, model->weights.token_embedding_table, _d_input_embeddings);
+    CHECK_KERNEL();
 
 	return Success;
 }
