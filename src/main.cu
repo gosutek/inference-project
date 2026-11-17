@@ -604,7 +604,10 @@ int main(void)
 
 	const dim3 attn_grid = dim3(tr, model.config.n_q_heads);
 	const dim3 attn_block = dim3(512);  // TODO: Un-hardcode this
-	__attn_global<<<attn_grid, attn_block, 98304>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o, l, m,
+    int max_smem_bytes = 0; // NOTE: Temporary, don't leave this here
+    CHECK_CUDA(cudaDeviceGetAttribute(&max_smem_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
+    CHECK_CUDA(cudaFuncSetAttribute(__attn_global, cudaFuncAttributeMaxDynamicSharedMemorySize, max_smem_bytes));
+	__attn_global<<<attn_grid, attn_block, max_smem_bytes>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o, l, m,
 		input_tokens_len, FLASH_ATTENTION_TILE_COLUMN, FLASH_ATTENTION_TILE_ROW, tc, tr,
 		model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
     CHECK_KERNEL();
