@@ -30,29 +30,30 @@ __device__ void __attn_gemmt(
 }
 
 __device__ bf16 __attn_rowmax(
-	const bf16* const ss,
-	const u32 br, const u32 bc,
-	const u32 c_row, const u32 c_col,
-	const u32 warp_id, const u32 lane_id)
+    const bf16* const ss,
+    const u32 br, const u32 bc,
+    const u32 c_row, const u32 c_col,
+    const u32 warp_id, const u32 lane_id)
 {
-	// one warp per two rows
-	// I still need 16 * 16 threads
+    // one warp per two rows
+    // I still need 16 * 16 threads
 
-	// the goal is to:
-	// - make lane_id ~ 0 of warp_id ~ 0 hold the rowmax of row 0
-	// - make lane_id ~ 16 of warp_id ~ 0 hold the rowmax of row 1
-	// - make lane_id ~ 0 of warp_id ~ 1 hold the rowmax of row 2
-	// - make lane_id ~ 16 of warp_id ~ 1 hold the rowmax of row 2
+    // the goal is to:
+    // - make lane_id ~ 0 of warp_id ~ 0 hold the rowmax of row 0
+    // - make lane_id ~ 16 of warp_id ~ 0 hold the rowmax of row 1
+    // - make lane_id ~ 0 of warp_id ~ 1 hold the rowmax of row 2
+    // - make lane_id ~ 16 of warp_id ~ 1 hold the rowmax of row 2
 
-	bf16 local_max = _d_dn_rm_get(ss, bc, c_row, c_col);
-	for (u32 offset = _CONSTANTS_WARP_SIZE_HALF / 2; offset > 0; offset /= 2) {
-		local_max = MAX(local_max, __shfl_xor_sync(0xffffffff, local_max, offset, _CONSTANTS_WARP_SIZE_HALF));
-	}
+    bf16 local_max = _d_dn_rm_get(ss, bc, c_row, c_col);
+    for (u32 offset = _CONSTANTS_WARP_SIZE_HALF / 2; offset > 0; offset /= 2) {
+        bf16 tmp = __shfl_xor_sync(0xffffffff, local_max, offset, _CONSTANTS_WARP_SIZE_HALF);
+        local_max = MAX(local_max, tmp);
+    }
 
-	if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
-		return local_max;
-	}
-	return 0;  // NOTE: IS this correct? It's supposed to return a bf16
+    if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
+        return local_max;
+    }
+    return 0;  // NOTE: IS this correct? It's supposed to return a bf16
 }
 
 __device__ void __attn_correction_factor(
