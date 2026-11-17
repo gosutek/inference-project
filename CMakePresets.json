@@ -14,7 +14,7 @@
       "binaryDir": "${sourceDir}/build/debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_CUDA_FLAGS_DEBUG": "-g -lineinfo -O0"
+        "CMAKE_CUDA_FLAGS_DEBUG": "-g -lineinfo -O0 -G"
       }
     },
     {

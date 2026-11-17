@@ -1,7 +1,6 @@
 #include "attention.cuh"
 #include "cuda_helpers.cuh"
 #include "helpers.h"
-#include <__clang_cuda_builtin_vars.h>
 
 /**
  * This kernel gets its own separate file
@@ -9,25 +8,25 @@
  * and keep an archive of older versions
 **/
 
-__device__ bf16 __attn_gemmt(
-	const bf16* const __restrict__ a,  // expect rm, smem
-	const bf16* const __restrict__ b,  // expect rm, smem
-	bf16* const __restrict__ c,        // output rm, smem
-	const u32 m,
-	const u32 k,
-	const u32 n,
-	const u32 c_row, const u32 c_col)
+__device__ void __attn_gemmt(
+    const bf16* const __restrict__ a,  // expect rm, smem
+    const bf16* const __restrict__ b,  // expect rm, smem
+    bf16* const __restrict__ c,        // output rm, smem
+    const u32 m,
+    const u32 k,
+    const u32 n,
+    const u32 c_row, const u32 c_col)
 {
-	// every block needs to output a 16x16 = 256
-	// every block has 512 threads
+    // every thread block needs to output a 16x16 = 256
+    // every thread block has 512 threads
 
-	// TODO: Add a check that n is a power of 2
+    // TODO: Add a check that n is a power of 2
 
-	bf16 acc = 0.0;
-	for (u32 i = 0; i < k; ++i) {
-		acc += _d_dn_rm_get(a, k, c_row, i) * _d_dn_rm_get(b, k, c_col, i);
-	}
-	return acc;
+    f32 acc = 0.0f;
+    for (u32 i = 0; i < k; ++i) {
+        acc += __bfloat162float(_d_dn_rm_get(a, k, c_row, i) * _d_dn_rm_get(b, k, c_col, i));
+    }
+    _d_dn_rm_set(c, n, c_row, c_col, acc);
 }
 
 __device__ bf16 __attn_rowmax(
