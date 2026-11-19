@@ -32,8 +32,7 @@ __device__ void __attn_gemmt(
 __device__ bf16 __attn_rowmax(
     const bf16* const ss,
     const u32 br, const u32 bc,
-    const u32 c_row, const u32 c_col,
-    const u32 warp_id, const u32 lane_id)
+    const u32 c_row, const u32 c_col)
 {
     // one warp per two rows
     // I still need 16 * 16 threads
@@ -49,50 +48,35 @@ __device__ bf16 __attn_rowmax(
         bf16 tmp = __shfl_xor_sync(0xffffffff, local_max, offset, _CONSTANTS_WARP_SIZE_HALF);
         local_max = MAX(local_max, tmp);
     }
+    // NOTE: Remember that since in butterfly reduction, the value are exchanged
+    // and due to the nature of the MAX operation, *all* lanes will be left with the row max.
 
-    if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
-        return local_max;
-    }
-    return 0;  // NOTE: IS this correct? It's supposed to return a bf16
+    return local_max;
 }
 
 __device__ void __attn_correction_factor(
     const bf16* const ss,
-    const bf16* const sm,
+    const bf16 rowmax,
     bf16* const       sp,
     const u32 br, const u32 bc,
-    const u32 c_row, const u32 c_col,
-    const u32 warp_id, const u32 lane_id)
+    const u32 c_row, const u32 c_col)
 {
-    // NOTE: Broadcast approach
-    // if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
-    //  rowmax = _d_dn_rm_get(sm, bc, 0, c_row);
-    // }
-    // rowmax = __shfl_sync(0xffffffff, rowmax, 0, _CONSTANTS_WARP_SIZE_HALF);  // broadcast to all threads in the two warp partitions
-
-    // NOTE: Copy from the buffer approach
-    const f32 rowmax = __bfloat162float(_d_dn_rm_get(sm, bc, 0, c_row));
     const f32 score = __bfloat162float(_d_dn_rm_get(ss, bc, c_row, c_col));
-    const f32 p = expf(score - rowmax);
+    const f32 p = expf(score - __bfloat162float(rowmax));
     _d_dn_rm_set(sp, bc, c_row, c_col, __float2bfloat16(p));
 }
 
 __device__ bf16 __attn_rowsum(
     const bf16* const sp,
     const u32 br, const u32 bc,
-    const u32 c_row, const u32 c_col,
-    const u32 warp_id, const u32 lane_id)
+    const u32 c_row, const u32 c_col)
 {
-    f32 acc = 0.0f;
     f32 val = __bfloat162float(_d_dn_rm_get(sp, br, c_row, c_col));
     for (u32 offset = _CONSTANTS_WARP_SIZE_HALF / 2; offset > 0; offset /= 2) {
-        acc += __shfl_xor_sync(0xffffffff, val, offset, _CONSTANTS_WARP_SIZE_HALF);
+        val += __shfl_xor_sync(0xffffffff, val, offset, _CONSTANTS_WARP_SIZE_HALF);
     }
 
-    if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
-        return __float2bfloat16(acc);
-    }
-    return 0;  // NOTE: IS this correct? It's supposed to return a bf16
+    return __float2bfloat16(val);
 }
 
 __global__ void __attn_global(
@@ -161,12 +145,11 @@ __global__ void __attn_global(
         if (threadIdx.x < br * bc) { // the first br * bc
             __attn_gemmt(sq, sk, ss, br, head_dim, bc, c_row, c_col); // calculates a br * bc block of the attention scores S, i.e. S_{ij}
             __syncwarp();
-            // WARNING: rowmax is '0' for threads other than 0 and 15
-            const bf16 rowmax = __attn_rowmax(ss, br, bc, c_row, c_col, warp_id, lane_id);
+            const bf16 rowmax = __attn_rowmax(ss, br, bc, c_row, c_col);
             __syncwarp();
-            __attn_correction_factor(ss, sm, sp, br, bc, c_row, c_col, warp_id, lane_id);
+            __attn_correction_factor(ss, rowmax, sp, br, bc, c_row, c_col);
             __syncwarp();
-            const bf16 rowsum = __attn_rowsum(sp, br, bc, c_row, c_col, warp_id, lane_id);
+            const bf16 rowsum = __attn_rowsum(sp, br, bc, c_row, c_col);
             __syncwarp();
 
             f32 s12term_1 = 0.0f; // this value is needed by every thread of the warp, that's why it's defined here, instead of the if scope 
