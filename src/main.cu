@@ -561,7 +561,7 @@ int main(void)
 	bf16* o = NULL;
 
 	const u64 q_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
-	const u64 o_bsize = input_tokens_len * model.config.global_head_dim * sizeof **model.weights.wo;
+	const u64 o_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof *o;
 
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, q_bsize, (void**)&q));
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, o_bsize, (void**)&o));
