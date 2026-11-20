@@ -8,6 +8,44 @@
  * and keep an archive of older versions
 **/
 
+__device__ void __attn_update_o(
+        bf16* const __restrict__ o,
+        const bf16* const __restrict__ p,
+        const bf16* const __restrict__ v,
+        const f32* const __restrict__ scalar_1,
+        const f32* const __restrict__ scalar_2,
+        const u32 head_dim)
+{
+    // every thread block needs to output a 16x512
+    // every thread block has 512 threads
+    // every *thread* will calculate 16 elements of the resulting matrix:
+    // thread t owns column t of O_i (expects blockDim.x == head_dim)
+    //
+    // O_i = diag(scalar_1) * O_i + diag(scalar_2) * (P~_ij * V_j)
+
+    // V_j[:, col] is reused by all FA_BR rows -> load it once into registers.
+    // FA_BC is constexpr and the loops are unrolled, so this stays in registers.
+    f32 v_col[FA_BC];
+#pragma unroll
+    for (u32 j = 0; j < FA_BC; ++j) {
+        v_col[j] = __bfloat162float(_d_dn_rm_get(v, head_dim, j, threadIdx.x));
+    }
+
+#pragma unroll
+    for (u32 r = 0; r < FA_BR; ++r) {
+        f32 acc = 0.0f;
+#pragma unroll
+        for (u32 j = 0; j < FA_BC; ++j) {
+            // p[r][j] is the same address for every thread in the warp -> broadcast
+            acc += __bfloat162float(_d_dn_rm_get(p, FA_BC, r, j)) * v_col[j];
+        }
+
+        // each so[r][col] is owned by exactly one thread, so updating in place is safe
+        const f32 o_old = __bfloat162float(_d_dn_rm_get(o, head_dim, r, threadIdx.x));
+        _d_dn_rm_set(o, head_dim, r, threadIdx.x, __float2bfloat16(scalar_1[r] * o_old + scalar_2[r] * acc));
+    }
+}
+
 __device__ void __attn_gemmt(
     const bf16* const __restrict__ a,  // expect rm, smem
     const bf16* const __restrict__ b,  // expect rm, smem
@@ -84,76 +122,76 @@ __global__ void __attn_global(
     const bf16* const __restrict__ k,
     const bf16* const __restrict__ v,
     bf16* const __restrict__ o,
-    bf16* const __restrict__ l,
-    bf16* const __restrict__ m,
     const u32 n,
-    const u32 bc, const u32 br, const u32 tc, const u32 tr, const u32 q_heads, const u32 kv_heads, const u32 head_dim)
+    const u32 tc, const u32 tr, const u32 q_heads, const u32 kv_heads, const u32 head_dim)
 {
-    // grid of size (Tr, q heads) = (50, 8)
+    // grid of size (Tr, q heads), block of head_dim threads.
+    // Each block owns one Q tile (FA_BR rows of one head) and loops over all KV tiles.
+    // O_i, l_i, m_i live in smem for the whole loop and only O_i is written back, once.
     extern __shared__ bf16 sk[];
-    // block [0] to block [ceil(N / br)] (49) will load K_0, V_0, [Q_0, Q_49], [O_0, O_49]
-    // ...
 
-    const u32 c_row = threadIdx.x / br;
-    const u32 c_col = MOD_POW2(threadIdx.x, bc);
+    const u32 c_row = threadIdx.x / FA_BC;
+    const u32 c_col = MOD_POW2(threadIdx.x, FA_BC);
 
-    const u32 warp_id = threadIdx.x / _CONSTANTS_WARP_SIZE;
     const u32 lane_id = MOD_POW2(threadIdx.x, _CONSTANTS_WARP_SIZE);
 
-    bf16* const sv = sk + bc * head_dim;
-    bf16* const sq = sv + bc * head_dim;
-    bf16* const so = sq + br * head_dim;
-    bf16* const sl = so + br * head_dim;
-    bf16* const sm = sl + br;
-    bf16* const ss = sm + br;
-    bf16* const sp = ss + br * bc;
-    f32* const s_scalar1 = (f32*)(sp + br * bc);
-    f32* const s_scalar2 = s_scalar1 + br;
+    const u32 head_col0 = blockIdx.y * head_dim;  // blockIdx.y plays the role of a head
 
-    for (u32 r = blockIdx.x * br; r < (blockIdx.x + 1) * br; ++r) {                              // iterating over the 16 rows of the 16x512 FA tile
-        bf16 val = _d_dn_rm_get(q, q_heads * head_dim, r, blockIdx.y * head_dim + threadIdx.x);  // blockIdx.y here plays the role of a head
-        _d_dn_rm_set(sq, head_dim, r - blockIdx.x * br, threadIdx.x, val);
-        // the tile we loaded is local to the block and starts from 0 to 511
+    bf16* const sv = sk + FA_BC * head_dim;
+    bf16* const sq = sv + FA_BC * head_dim;
+    bf16* const so = sq + FA_BR * head_dim;
+    f32* const  sl = (f32*)(so + FA_BR * head_dim);
+    f32* const  sm = sl + FA_BR;
+    f32* const  s_scalar1 = sm + FA_BR;
+    f32* const  s_scalar2 = s_scalar1 + FA_BR;
+    bf16* const ss = (bf16*)(s_scalar2 + FA_BR);
+    bf16* const sp = ss + FA_BR * FA_BC;
+
+    // Load Q_i, init O_i = 0. Rows past n (last tile when n % FA_BR != 0) are zero-filled and never stored.
+    for (u32 r = 0; r < FA_BR; ++r) {
+        const u32 row = blockIdx.x * FA_BR + r;
+        const bf16 val = row < n ? _d_dn_rm_get(q, q_heads * head_dim, row, head_col0 + threadIdx.x) : __float2bfloat16(0.0f);
+        _d_dn_rm_set(sq, head_dim, r, threadIdx.x, val);
+        _d_dn_rm_set(so, head_dim, r, threadIdx.x, __float2bfloat16(0.0f));
     }
 
-    for (u32 r = blockIdx.x * br; r < (blockIdx.x + 1) * br; ++r) {
-        bf16 val = _d_dn_rm_get(o, q_heads * head_dim, r, blockIdx.y * head_dim + threadIdx.x);
-        _d_dn_rm_set(so, head_dim, r - blockIdx.x * br, threadIdx.x, val);
-    }
-
-    if (threadIdx.x < _CU_CONST_WARP_SIZE / 2) {
-        sl[threadIdx.x] = l[blockIdx.x * br + threadIdx.x];
-    } else if (threadIdx.x >= _CU_CONST_WARP_SIZE && threadIdx.x < _CU_CONST_WARP_SIZE + _CU_CONST_WARP_SIZE / 2) {
-        sm[threadIdx.x % (_CU_CONST_WARP_SIZE / 2)] = m[(blockIdx.x * br) + (threadIdx.x % (_CU_CONST_WARP_SIZE / 2))];
+    // l_i = 0, m_i = -inf
+    if (threadIdx.x < FA_BR) {
+        sl[threadIdx.x] = 0.0f;
+        sm[threadIdx.x] = -INFINITY;
     }
 
     __syncthreads();
-    // so at *this* point, every block of the 50x8 we have has loaded their respective tiles into shared memory.
-    // Now we need to loop of every KV tile
 
     for (u32 i_tile = 0; i_tile < tc; ++i_tile) {
-        for (u32 tile_row = 0; tile_row < br; ++tile_row) {
-            bf16 val = _d_dn_rm_get(k, kv_heads * head_dim, i_tile * br + tile_row, threadIdx.x);
-            _d_dn_rm_set(sk, kv_heads * head_dim, tile_row, threadIdx.x, val);
+        for (u32 tile_row = 0; tile_row < FA_BC; ++tile_row) {
+            const u32 row = i_tile * FA_BC + tile_row;
+            const bool in_range = row < n;
 
-            val = _d_dn_rm_get(v, kv_heads * head_dim, i_tile * br + tile_row, threadIdx.x);
-            _d_dn_rm_set(sv, kv_heads * head_dim, tile_row, threadIdx.x, val);
+            bf16 val = in_range ? _d_dn_rm_get(k, kv_heads * head_dim, row, threadIdx.x) : __float2bfloat16(0.0f);
+            _d_dn_rm_set(sk, head_dim, tile_row, threadIdx.x, val);
+
+            val = in_range ? _d_dn_rm_get(v, kv_heads * head_dim, row, threadIdx.x) : __float2bfloat16(0.0f);
+            _d_dn_rm_set(sv, head_dim, tile_row, threadIdx.x, val);
         }
         __syncthreads();
 
         // NOTE: Don't know if I can avoid this, i.e. deactivating half the threads of the block.
-        if (threadIdx.x < br * bc) { // the first br * bc
-            __attn_gemmt(sq, sk, ss, br, head_dim, bc, c_row, c_col); // calculates a br * bc block of the attention scores S, i.e. S_{ij}
+        if (threadIdx.x < FA_BR * FA_BC) { // the first br * bc
+            __attn_gemmt(sq, sk, ss, FA_BR, head_dim, FA_BC, c_row, c_col); // calculates a br * bc block of the attention scores S, i.e. S_{ij}
+            // Keys past n (last KV tile) must not take part in the softmax: S = -inf -> P~ = 0.
+            if (i_tile * FA_BC + c_col >= n) {
+                _d_dn_rm_set(ss, FA_BC, c_row, c_col, __float2bfloat16(-INFINITY));
+            }
             __syncwarp();
-            const bf16 rowmax = __attn_rowmax(ss, br, bc, c_row, c_col);
+            const bf16 rowmax = __attn_rowmax(ss, FA_BR, FA_BC, c_row, c_col);
             __syncwarp();
-            __attn_correction_factor(ss, rowmax, sp, br, bc, c_row, c_col);
+            __attn_correction_factor(ss, rowmax, sp, FA_BR, FA_BC, c_row, c_col);
             __syncwarp();
-            const bf16 rowsum = __attn_rowsum(sp, br, bc, c_row, c_col);
+            const bf16 rowsum = __attn_rowsum(sp, FA_BR, FA_BC, c_row, c_col);
             __syncwarp();
 
-            f32 s12term_1 = 0.0f; // this value is needed by every thread of the warp, that's why it's defined here, instead of the if scope 
-            f32 new_l = 0.0f;
+            // every lane of the 16-lane row group holds rowmax/rowsum; one lane per row writes the stats
             if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
                 const bf16 hbm_m = _d_dn_rm_get(sm, n, 0, c_row);
                 const bf16 new_m = MAX(hbm_m, rowmax);
@@ -181,19 +219,7 @@ __global__ void __attn_global(
             }
         }
         __syncthreads();
-            // __syncwarp();
-            // s12term_1 = __shfl_sync(0xffffffff, s12term_1, 0, _CONSTANTS_WARP_SIZE_HALF); // lane 0 copies to 1-15 and lane 16 copies to 17-31
-            // new_l = __shfl_sync(0xffffffff, new_l, 0, _CONSTANTS_WARP_SIZE_HALF);
-            // for (u32 offset = 0; offset < head_dim; offset += _CONSTANTS_WARP_SIZE_HALF)
-            // {
-            //     const u32 r = 2 * warp_id + lane_id / _CONSTANTS_WARP_SIZE_HALF;
-            //     // Row index: lane_id / _CONSTANTS_WARP_SIZE_HALF should return 0 for the first half of the warp and 1 for the other half
-            //     const u32 c = lane_id % _CONSTANTS_WARP_SIZE_HALF + offset;
-            //     bf16 s12term_1_res = __float2bfloat16(s12term_1 * __bfloat162float(_d_dn_rm_get(so, head_dim, r, c)) / new_l); // diag(l_{i}^{new})(diag(l_i)e^{m_{i}- m_{i}^{new}}O_i)
-            //     // _d_dn_rm_set(stmp, head_dim, r, c, s12term_1_res);
-            // }
+        __attn_update_o(so, sp, sv, s_scalar1, s_scalar2, head_dim);
+        __syncthreads();  // next iteration overwrites sk/sv, and this one's update reads sv/sp
     }
-}
 
-// LEFT: Fix the bug with gemmt retuning a value but none using it.
-// Figure out the barriers

@@ -25,8 +25,6 @@
 
 #define MAX_INPUT_SEQ_LEN 512
 #define MAX_TOTAL_SEQ_LEN 1024
-#define FLASH_ATTENTION_TILE_ROW 16
-#define FLASH_ATTENTION_TILE_COLUMN 16
 
 static Error_t print_dev_buf_u32(ExecCtx* const e_ctx, u32* src, const u64 bsize)
 {
@@ -561,21 +559,12 @@ int main(void)
 
 	bf16* q = NULL;
 	bf16* o = NULL;
-	bf16* l = NULL;
-	bf16* m = NULL;
 
 	const u64 q_bsize = input_tokens_len * model.config.global_head_dim * model.config.n_q_heads * sizeof **model.weights.wq;
 	const u64 o_bsize = input_tokens_len * model.config.global_head_dim * sizeof **model.weights.wo;
-	const u64 lm_bsize = input_tokens_len * sizeof *l;
 
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, q_bsize, (void**)&q));
 	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, o_bsize, (void**)&o));
-	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, lm_bsize, (void**)&l));
-	CHECK_ERROR(arena_dev_push(&e_ctx->dev_arena, lm_bsize, (void**)&m));
-
-	CHECK_CUDA(cudaMemset(o, 0, input_tokens_len * model.config.global_head_dim * model.config.n_q_heads));
-	CHECK_CUDA(cudaMemset(l, 0, input_tokens_len));
-	CHECK_CUDA(cudaMemset(m, 0, input_tokens_len));
 
 	// NOTE: What if safetensors doesn't provide matrices in row major?
 	// TODO: Have some sort of failsafe in case we try to use more than the device has
@@ -599,16 +588,16 @@ int main(void)
 	CHECK_CUDA(cudaStreamSynchronize(stream_buf[1]));
 	CHECK_CUDA(cudaStreamSynchronize(stream_buf[2]));
 
-	const u32 tr = CEIL_DIVI(input_tokens_len, FLASH_ATTENTION_TILE_ROW);
-	const u32 tc = CEIL_DIVI(input_tokens_len, FLASH_ATTENTION_TILE_COLUMN);
+	const u32 tr = CEIL_DIVI(input_tokens_len, FA_BR);
+	const u32 tc = CEIL_DIVI(input_tokens_len, FA_BC);
 
 	const dim3 attn_grid = dim3(tr, model.config.n_q_heads);
 	const dim3 attn_block = dim3(512);  // TODO: Un-hardcode this
     int max_smem_bytes = 0; // NOTE: Temporary, don't leave this here
     CHECK_CUDA(cudaDeviceGetAttribute(&max_smem_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0));
     CHECK_CUDA(cudaFuncSetAttribute(__attn_global, cudaFuncAttributeMaxDynamicSharedMemorySize, max_smem_bytes));
-	__attn_global<<<attn_grid, attn_block, max_smem_bytes>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o, l, m,
-		input_tokens_len, FLASH_ATTENTION_TILE_COLUMN, FLASH_ATTENTION_TILE_ROW, tc, tr,
+	__attn_global<<<attn_grid, attn_block, max_smem_bytes>>>(q, model.kv_cache[0].k, model.kv_cache[0].v, o,
+		input_tokens_len, tc, tr,
 		model.config.n_q_heads, model.config.n_kv_heads, model.config.global_head_dim);
     CHECK_KERNEL();
 	CHECK_CUDA(cudaDeviceSynchronize());
