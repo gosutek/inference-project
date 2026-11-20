@@ -193,29 +193,24 @@ __global__ void __attn_global(
 
             // every lane of the 16-lane row group holds rowmax/rowsum; one lane per row writes the stats
             if (lane_id == 0 || lane_id == _CONSTANTS_WARP_SIZE_HALF) {
-                const bf16 hbm_m = _d_dn_rm_get(sm, n, 0, c_row);
-                const bf16 new_m = MAX(hbm_m, rowmax);
+                const f32 m_old = sm[c_row];
+                const f32 l_old = sl[c_row];
+                const f32 m_tile = __bfloat162float(rowmax);
+                const f32 m_new = fmaxf(m_old, m_tile);
 
-                const bf16 hbm_l = _d_dn_rm_get(sl, n, 0, c_row);
-
-                const f32 new_m_f32 = __bfloat162float(new_m);
-
-                // e^{m_{i} - m_{i}^{new}}
-                const f32 exp_1 = expf(__bfloat162float(hbm_m) - new_m_f32);
+                // e^{m_{i} - m_{i}^{new}}, 0 on the first tile since m_old = -inf
+                const f32 exp_1 = expf(m_old - m_new);
                 // e^{\tilde{m}_{ij} - m_{i}^{new}}
-                const f32 exp_2 = expf(__bfloat162float(rowmax) - new_m_f32);
+                const f32 exp_2 = expf(m_tile - m_new);
 
-                new_l = exp_1 * __bfloat162float(hbm_l) + exp_2 * __bfloat162float(rowsum);
+                const f32 l_new = exp_1 * l_old + exp_2 * __bfloat162float(rowsum);
 
                 // diag(l_i) * e^{m_{i} - m_{i}^{new}} * diag(l_i^{new})^{-1}
-                const f32 scalar1 = __bfloat162float(hbm_l) * exp_1 / new_l;
+                s_scalar1[c_row] = l_old * exp_1 / l_new;
                 // e^{\tilde{m}_{ij} - m_{i}^{new}} * diag(l_i^{new})^{-1}
-                const f32 scalar2 = exp_2 / new_l;
-
-                s_scalar1[c_row] = scalar1;
-                s_scalar2[c_row] = scalar2;
-                sm[c_row] = new_m;
-                sl[c_row] = new_l;
+                s_scalar2[c_row] = exp_2 / l_new;
+                sm[c_row] = m_new;
+                sl[c_row] = l_new;
             }
         }
         __syncthreads();
@@ -223,3 +218,11 @@ __global__ void __attn_global(
         __syncthreads();  // next iteration overwrites sk/sv, and this one's update reads sv/sp
     }
 
+    // O_i is already normalized (scalar_1/2 divide by l_new every step): write it back once.
+    for (u32 r = 0; r < FA_BR; ++r) {
+        const u32 row = blockIdx.x * FA_BR + r;
+        if (row < n) {
+            _d_dn_rm_set(o, q_heads * head_dim, row, head_col0 + threadIdx.x, _d_dn_rm_get(so, head_dim, r, threadIdx.x));
+        }
+    }
+}
