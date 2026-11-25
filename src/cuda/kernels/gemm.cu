@@ -54,22 +54,22 @@ __global__ void __gemmt(
 	const u32 c_col = threadIdx.x + blockIdx.x * blockDim.x;  // (0 + 33 * 32) = 1056
 	const u32 c_row = threadIdx.y + blockIdx.y * blockDim.y;  // (10)
 
-	bf16 acc = 0.0;
+	f32 acc = 0.0;
 	for (u32 offset = 0; offset < k; offset += block_size) {
 		bf16 load_val = _d_dn_rm_get(a, k, c_row, threadIdx.x + offset);
 		_d_dn_rm_set(smem_a, block_size, threadIdx.y, threadIdx.x, load_val);
 
 		load_val = _d_dn_rm_get(b, k, c_col, threadIdx.y + offset);
-		_d_dn_rm_set(smem_b, block_size, threadIdx.x, threadIdx.y, load_val);  // transpose
+		_d_dn_rm_set(smem_b, block_size, threadIdx.y, threadIdx.x, load_val);  // transpose
 		__syncthreads();
 
 		for (u32 i = 0; i < block_size; ++i) {
-			acc += _d_dn_rm_get(smem_a, block_size, threadIdx.y, i) * _d_dn_rm_get(smem_b, block_size, i, threadIdx.x);
+			acc += __bfloat162float(_d_dn_rm_get(smem_a, block_size, threadIdx.y, i)) * __bfloat162float(_d_dn_rm_get(smem_b, block_size, i, threadIdx.x));
 		}
 		__syncthreads();
 	}
 
-	_d_dn_rm_set(c, n, c_row, c_col, acc);
+	_d_dn_rm_set(c, n, c_row, c_col, __float2bfloat16(acc));
 }
 
 /*
@@ -85,7 +85,7 @@ Error_t k_gemm()
 Error_t k_gemmt(const bf16* const a, const bf16* const b, bf16* const c, const u32 hidden_size, const cudaStream_t stream, const u32 input_seq_len, const u32 n)
 {
 	const u32  tiling_block_size = 32;
-	const dim3 grid_size = { CEIL_DIVI(hidden_size, tiling_block_size), CEIL_DIVI(input_seq_len, tiling_block_size) };
+	const dim3 grid_size = { CEIL_DIVI(n, tiling_block_size), CEIL_DIVI(input_seq_len, tiling_block_size) };
 	const dim3 block_size = { tiling_block_size, tiling_block_size };
 	// I need enough smem for 2 32x32 BF16 matrices
 	const u64 smem = 2 * tiling_block_size * tiling_block_size * sizeof *a;
