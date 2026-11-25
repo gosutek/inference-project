@@ -4,9 +4,6 @@
 
 #include "utils.cuh"
 
-constexpr const f64 ATOL = 1e-7;
-constexpr const f64 RTOL = 1e-3;
-
 void testutils_create_cublas_tenv(ExecCtx** e_ctx, cublasHandle_t* cublas_handle)
 {
 	CHECK_ERROR(exec_ctx_create(e_ctx));
@@ -23,7 +20,7 @@ void testutils_destroy_cublas_tenv(ExecCtx** e_ctx, cublasHandle_t* cublas_handl
 	return;
 }
 
-bool comparef(const f32 a, const f32 b)
+bool comparef(const f32 a, const f32 b, const f64 atol, const f64 rtol)
 {
 	if (std::isnan(a) || std::isnan(b)) {
 		std::cout << "isnan: " << a << " or " << b << std::endl;
@@ -34,7 +31,7 @@ bool comparef(const f32 a, const f32 b)
 	}
 
 	const f64 abs_diff = std::fabs(a - b);
-	const f64 tol = ATOL + RTOL * std::fabs(static_cast<f64>(b));
+	const f64 tol = atol + rtol * std::fabs(static_cast<f64>(b));
 	if (std::isfinite(abs_diff) && abs_diff <= tol) {
 		return true;
 	}
