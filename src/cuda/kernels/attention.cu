@@ -104,7 +104,7 @@ __device__ void __attn_correction_factor(
     _d_dn_rm_set(sp, bc, c_row, c_col, __float2bfloat16(p));
 }
 
-__device__ bf16 __attn_rowsum(
+__device__ f32 __attn_rowsum(
     const bf16* const sp,
     const u32 br, const u32 bc,
     const u32 c_row, const u32 c_col)
@@ -114,7 +114,7 @@ __device__ bf16 __attn_rowsum(
         val += __shfl_xor_sync(0xffffffff, val, offset, _CONSTANTS_WARP_SIZE_HALF);
     }
 
-    return __float2bfloat16(val);
+    return val;
 }
 
 __global__ void __attn_global(
@@ -188,7 +188,7 @@ __global__ void __attn_global(
             __syncwarp();
             __attn_correction_factor(ss, rowmax, sp, FA_BR, FA_BC, c_row, c_col);
             __syncwarp();
-            const bf16 rowsum = __attn_rowsum(sp, FA_BR, FA_BC, c_row, c_col);
+            const f32 rowsum = __attn_rowsum(sp, FA_BR, FA_BC, c_row, c_col);
             __syncwarp();
 
             // every lane of the 16-lane row group holds rowmax/rowsum; one lane per row writes the stats
@@ -203,7 +203,7 @@ __global__ void __attn_global(
                 // e^{\tilde{m}_{ij} - m_{i}^{new}}
                 const f32 exp_2 = expf(m_tile - m_new);
 
-                const f32 l_new = exp_1 * l_old + exp_2 * __bfloat162float(rowsum);
+                const f32 l_new = exp_1 * l_old + exp_2 * rowsum;
 
                 // diag(l_i) * e^{m_{i} - m_{i}^{new}} * diag(l_i^{new})^{-1}
                 s_scalar1[c_row] = l_old * exp_1 / l_new;
