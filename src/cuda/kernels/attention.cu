@@ -62,7 +62,7 @@ __device__ void __attn_gemmt(
 
     f32 acc = 0.0f;
     for (u32 i = 0; i < k; ++i) {
-        acc += __bfloat162float(_d_dn_rm_get(a, k, c_row, i) * _d_dn_rm_get(b, k, c_col, i));
+        acc += __bfloat162float(_d_dn_rm_get(a, k, c_row, i)) * __bfloat162float(_d_dn_rm_get(b, k, c_col, i));
     }
     _d_dn_rm_set(c, n, c_row, c_col, acc);
 }
